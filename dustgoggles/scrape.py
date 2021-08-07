@@ -59,26 +59,21 @@ def scrape_subframe(label_text: str) -> tuple:
 
 
 # cached versions for faster operation on networked filesystems.
-
 cached_label_loader = cache(get_label_text)
-
 
 @cache
 def scrape_from_file(label, pattern):
     return make_scraper(cached_label_loader(label))(pattern)
 
 
-@cache
 def scrape_patterns(
+    label: Union[Path, str],
     metadata_regex: Mapping,
     supplemental_search_function: Optional[Callable] = None,
-    label: Union[Path, str] = None,
 ) -> dict:
     """
-    grabs all the patterns you specify from whatever. cached by default.
+    grabs all the patterns you specify from whatever.
     """
-    if label is None:
-        return {}
     label_text = cached_label_loader(label)
     # little closure for neatness
     scrape = make_scraper(label_text)
@@ -94,7 +89,7 @@ def scrape_patterns(
 
 
 def bulk_scrape_metadata(
-    pattern_scraper: Callable, files: Iterable
+    files: Iterable, pattern_scraper: Callable
 ) -> list[dict]:
     """
     scrapes metadata from all the files you pass it, and that's that
