@@ -61,6 +61,7 @@ def scrape_subframe(label_text: str) -> tuple:
 # cached versions for faster operation on networked filesystems.
 cached_label_loader = cache(get_label_text)
 
+
 @cache
 def scrape_from_file(label, pattern):
     return make_scraper(cached_label_loader(label))(pattern)

@@ -33,7 +33,9 @@ class Composition:
 
     def __init__(
         self,
-        steps: Optional[Union[Mapping[Any, Callable], Sequence[Callable]]] = None,
+        steps: Optional[
+            Union[Mapping[Any, Callable], Sequence[Callable]]
+        ] = None,
         parameters: Optional[Mapping] = None,
         sends: Optional[Mapping[Any, Callable]] = None,
         inserts: Optional[Mapping] = None,
@@ -62,6 +64,24 @@ class Composition:
                 str(step_name) + " is not an element of the pipeline."
             )
         return self.steps[step_name]
+
+    def bind_args(self, step_name, *args, rebind=False,  **kwargs):
+        if (not args) and (not kwargs):
+            return
+        step = self._check_for_step(step_name)
+        if (rebind is True) and ("func" in dir(step)):
+            step = step.func
+        if (rebind is True) or (self.parameters.get("step_name") is None):
+            self.parameters[step_name] = (args, kwargs)
+        else:
+            self.parameters[step_name][0] = list(
+                self.parameters[step_name][0] + args
+            )
+            self.parameters[step_name][1] |= kwargs
+        self.steps[step_name] = partial(step, *args, **kwargs)
+
+    # TODO: build above functionality out into what is presently \
+    #  bind_kwargs, etc.
 
     def bind_kwargs(self, step_name, rebind=False, **kwargs):
         if kwargs == {}:
@@ -283,7 +303,10 @@ class Composition:
         execute the pipeline, initializing it with signal.
         """
         iterpipe = self.itercall(
-            signal, rt_insert_args, rt_insert_kwargs, **special_kwargs
+            signal,
+            *rt_insert_args,
+            rt_insert_kwargs=rt_insert_kwargs,
+            **special_kwargs
         )
         state = None
         for state in iterpipe:
