@@ -1,7 +1,8 @@
 """structured data and manipulators thereof"""
 from collections import defaultdict
 from copy import copy
-from operator import methodcaller
+from functools import reduce
+from operator import methodcaller, add, getitem
 from typing import Mapping, Collection, Any
 
 from cytoolz import merge
@@ -47,6 +48,7 @@ class NestingDict(defaultdict):
     insert a series of keys at any depth into a NestingDict
     and it automatically creates all needed levels above.
     """
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.default_factory = NestingDict
@@ -97,3 +99,34 @@ def get_from_all(key, mappings, default=None):
     else:
         view = mappings
     return list(map(methodcaller("get", key, default), view))
+
+
+def get_from(collection, keys, default=None):
+    """
+    toolz-style getter that will attempt both getattr and getitem (intended
+    for named tuples nested inside of dicts, etc)
+    (hierarchical list of keys, collection ->
+    item of collection, possibly from a nested collection)
+    """
+    level = collection
+    for key in keys:
+        try:
+            level = getitem(level, key)
+        except (KeyError, IndexError, TypeError):
+            try:
+                level = getattr(level, key)
+            except AttributeError:
+                return default
+    return level
+
+
+def dig_for(mapping, target):
+    nests = [v for v in mapping.values() if isinstance(v, Mapping)]
+    level_keys = [(k, v) for k, v in mapping.items() if k == target]
+    if nests:
+        level_keys += reduce(add, [dig_for(nest, target) for nest in nests])
+    return level_keys
+
+
+def dig_for_value(mapping, target):
+    return dig_for(mapping, target)[0][1]

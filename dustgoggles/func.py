@@ -1,8 +1,8 @@
 """functional utilities and generators"""
 from functools import wraps, partial, reduce
 from itertools import accumulate, repeat
-from operator import add, contains, and_
-from typing import Callable, Iterable, Any
+from operator import add, contains, and_, getitem
+from typing import Callable, Iterable, Any, Mapping
 
 
 def pass_parameters(func, *args, **kwargs):
@@ -63,3 +63,21 @@ def is_it(*types: type) -> Callable[[Any], bool]:
         return isinstance(whatever, types)
 
     return it_is
+
+
+def intersection(*iterables):
+    return reduce(and_, [set(iterable) for iterable in iterables])
+
+
+def disjoint(*sets):
+    shared = intersection(*sets)
+    return [
+        [file for file in this_set if file not in shared] for this_set in sets
+    ]
+
+
+def constant(value):
+    def return_constant(*_, **__):
+        return value
+
+    return return_constant
