@@ -2,7 +2,7 @@
 from collections import defaultdict
 from copy import copy
 from functools import reduce
-from operator import methodcaller, add, getitem
+from operator import methodcaller, add, getitem, eq
 from typing import Mapping, Collection, Any
 
 from cytoolz import merge
@@ -120,13 +120,18 @@ def get_from(collection, keys, default=None):
     return level
 
 
-def dig_for(mapping, target):
+def dig_for(mapping, target, predicate=eq):
     nests = [v for v in mapping.values() if isinstance(v, Mapping)]
-    level_keys = [(k, v) for k, v in mapping.items() if k == target]
+    level_keys = [(k, v) for k, v in mapping.items() if predicate(k, target)]
     if nests:
-        level_keys += reduce(add, [dig_for(nest, target) for nest in nests])
+        level_keys += reduce(
+            add, [dig_for(nest, target, predicate) for nest in nests]
+        )
     return level_keys
 
 
-def dig_for_value(mapping, target):
-    return dig_for(mapping, target)[0][1]
+def dig_for_value(mapping, target, predicate=eq):
+    dug = dig_for(mapping, target, predicate)
+    if dug:
+        return dug[0][1]
+    return None
