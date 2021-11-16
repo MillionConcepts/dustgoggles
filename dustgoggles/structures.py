@@ -101,22 +101,29 @@ def get_from_all(key, mappings, default=None):
     return list(map(methodcaller("get", key, default), view))
 
 
+def getitemattr(collection, key):
+    """
+    getter that attempts both getattr and getitem (intended
+    for named tuples nested inside of dicts, etc)
+    """
+    try:
+        return getitem(collection, key)
+    except (KeyError, IndexError, TypeError):
+        return getattr(collection, key)
+
+
 def get_from(collection, keys, default=None):
     """
-    toolz-style getter that will attempt both getattr and getitem (intended
-    for named tuples nested inside of dicts, etc)
+    hierarchical (toolz-style) extension of get_itemattr() --
     (hierarchical list of keys, collection ->
     item of collection, possibly from a nested collection)
     """
     level = collection
     for key in keys:
         try:
-            level = getitem(level, key)
-        except (KeyError, IndexError, TypeError):
-            try:
-                level = getattr(level, key)
-            except AttributeError:
-                return default
+            level = getitemattr(level, key)
+        except AttributeError:
+            return default
     return level
 
 
@@ -135,3 +142,16 @@ def dig_for_value(mapping, target, predicate=eq):
     if dug:
         return dug[0][1]
     return None
+
+
+# TODO: turn pivot.split_on into a dispatch function in structures,
+#  replace downstream
+def separate_by(collection, predicate):
+    hits = []
+    misses = []
+    for item in collection:
+        if predicate(item) is True:
+            hits.append(item)
+        else:
+            misses.append(item)
+    return hits, misses

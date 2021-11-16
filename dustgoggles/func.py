@@ -1,29 +1,31 @@
 """functional utilities and generators"""
 from functools import wraps, partial, reduce
 from itertools import accumulate, repeat
-from operator import add, contains, and_, getitem
-from typing import Callable, Iterable, Any, Mapping
+from operator import add, contains, and_
+from typing import Callable, Iterable, Any
 
 
 def pass_parameters(func, *args, **kwargs):
     return func(*args, **kwargs)
 
 
-def catch_interaction(noninteractive, func, *args, **kwargs):
+def catch_interaction(
+    noninteractive: Any, func: Callable, *args, default: Any = "", **kwargs
+):
     """
-    if noninteractive is truthy, always return empty string. intended
+    if noninteractive is truthy, always return default. intended
     primarily as a wrapper to preempt attempts to prompt user input.
     """
     if noninteractive:
-        return ""
+        return default
     return func(*args, **kwargs)
 
 
-def naturals():
+def naturals() -> accumulate:
     return accumulate(repeat(1), add)
 
 
-def zero(*_, **__):
+def zero(*_, **__) -> None:
     """take anything, return nothing"""
     return
 
@@ -65,18 +67,18 @@ def is_it(*types: type) -> Callable[[Any], bool]:
     return it_is
 
 
-def intersection(*iterables):
+def intersection(*iterables: Iterable) -> set:
     return reduce(and_, [set(iterable) for iterable in iterables])
 
 
-def disjoint(*sets):
+def disjoint(*sets: Iterable) -> list[list]:
     shared = intersection(*sets)
     return [
         [file for file in this_set if file not in shared] for this_set in sets
     ]
 
 
-def constant(value):
+def constant(value: Any) -> Callable:
     def return_constant(*_, **__):
         return value
 
