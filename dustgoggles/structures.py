@@ -3,7 +3,7 @@ from collections import defaultdict
 from copy import copy
 from functools import reduce
 from operator import methodcaller, add, getitem, eq
-from typing import Mapping, Collection, Any
+from typing import Mapping, Collection, Any, Union, Sequence
 
 from cytoolz import merge
 
@@ -101,7 +101,7 @@ def get_from_all(key, mappings, default=None):
     return list(map(methodcaller("get", key, default), view))
 
 
-def getitemattr(collection, key):
+def getitemattr(collection: Union[Sequence, Mapping], key: Any) -> Any:
     """
     getter that attempts both getattr and getitem (intended
     for named tuples nested inside of dicts, etc)
