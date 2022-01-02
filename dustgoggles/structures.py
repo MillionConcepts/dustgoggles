@@ -144,6 +144,13 @@ def dig_for_value(mapping, target, predicate=eq):
     return None
 
 
+def dig_for_values(mapping, target, predicate=eq):
+    dug = dig_for(mapping, target, predicate)
+    if dug:
+        return [level[1] for level in dug]
+    return []
+
+
 # TODO: turn pivot.split_on into a dispatch function in structures,
 #  replace downstream
 def separate_by(collection, predicate):
