@@ -3,11 +3,11 @@ from collections import defaultdict
 from copy import copy
 from functools import reduce
 from operator import methodcaller, add, getitem, eq
-from typing import Mapping, Collection, Any, Union, Sequence
+from typing import Mapping, Collection, Any, Union, Sequence, MutableMapping
 
 from cytoolz import merge
 
-from dustgoggles.func import naturals
+from dustgoggles.func import naturals, constant
 
 
 def to_records(nested: Mapping, accumulated_levels=None, level_names=None):
@@ -149,6 +149,24 @@ def dig_for_values(mapping, target, predicate=eq):
     if dug:
         return [level[1] for level in dug]
     return []
+
+
+def dig_and_edit(
+    mapping,
+    target,
+    input_object=None,
+    predicate=eq,
+    value_set_function=None
+):
+    match_keys = [k for k in mapping.keys() if predicate(k, target)]
+    if value_set_function is None:
+        value_set_function = constant(input_object)
+    for key in match_keys:
+        mapping[key] = value_set_function(input_object, mapping[key])
+    nests = [v for v in mapping.values() if isinstance(v, MutableMapping)]
+    for nest in nests:
+        dig_and_edit(nest, target, input_object, predicate, value_set_function)
+    return mapping
 
 
 # TODO: turn pivot.split_on into a dispatch function in structures,
