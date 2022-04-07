@@ -1,13 +1,14 @@
 """structured data and manipulators thereof"""
 from collections import defaultdict
 from copy import copy
-from functools import reduce
+from functools import reduce, partial
 from operator import methodcaller, add, getitem, eq
-from typing import Mapping, Collection, Any, Union, Sequence, MutableMapping
+from typing import Mapping, Collection, Any, Union, Sequence, MutableMapping, \
+    Callable
 
 from cytoolz import merge
 
-from dustgoggles.func import naturals, constant
+from dustgoggles.func import naturals, constant, is_it, splat
 
 
 def to_records(nested: Mapping, accumulated_levels=None, level_names=None):
@@ -54,6 +55,16 @@ class NestingDict(defaultdict):
         self.default_factory = NestingDict
 
     __repr__ = dict.__repr__
+
+    def todict(self):
+        """warning: this function permanently modify lower levels"""
+        # note: could be made depth-first by using methodcaller('todict')
+        # rather than dict
+        return dict(
+            dig_and_edit(
+                self, lambda _, v: is_it(NestingDict)(v), lambda _, v: dict(v)
+            )
+        )
 
 
 def listify(thing):
@@ -126,56 +137,153 @@ def get_from(collection, keys, default=None):
             return default
     return level
 
+def constant_to_dig_predicate(putative_predicate, match="key", default=eq):
+    if isinstance(putative_predicate, Callable):
+        return putative_predicate
+    if match == "key":
+        return keyonly(partial(default, putative_predicate))
+    elif match == "value":
+        return valonly(partial(default, putative_predicate))
+    elif match == "item":
+        return partial(default, putative_predicate)
 
-def dig_for(mapping, target, predicate=eq):
-    nests = [v for v in mapping.values() if isinstance(v, Mapping)]
-    level_keys = [(k, v) for k, v in mapping.items() if predicate(k, target)]
+
+def keyonly(func):
+    def onlykey(key, _value):
+        return func(key)
+    return onlykey
+
+
+def valonly(func):
+    def onlyval(_key, value):
+        return func(value)
+    return onlyval
+
+EXTANT_MAPPINGS = [dict]
+try:
+    import bunny
+    EXTANT_MAPPINGS.append(bunny.Bunny)
+except ImportError:
+    pass
+try:
+    import multidict
+    EXTANT_MAPPINGS.append(multidict.MultiDict)
+except ImportError:
+    pass
+EXTANT_MAPPINGS = tuple(EXTANT_MAPPINGS)
+
+def _evaluate_diglevel(mapping, predicate, mtypes):
+    # note: this is a little awkward and is done to circumvent the fact
+    # that checking isinstance against the ABCs is relatively slow
+    # but we would like to support many types of Mapping
+    # that are not dreamt of in this library.
+    nests = [v for v in mapping.values() if isinstance(v, mtypes)]
+    level_items = [(k, v) for k, v in mapping.items() if predicate(k, v)]
+    return level_items, nests
+
+
+def dig_for_all(mapping, predicate, mtypes):
+    level_items, nests = _evaluate_diglevel(mapping, predicate, mtypes)
     if nests:
-        level_keys += reduce(
-            add, [dig_for(nest, target, predicate) for nest in nests]
+        level_items += reduce(
+            add, [dig_for_all(nest, predicate, mtypes) for nest in nests]
         )
-    return level_keys
+    return level_items
 
 
-def dig_for_value(mapping, target, predicate=eq):
-    dug = dig_for(mapping, target, predicate)
+def dig_all_wrapper(mapping, ref, match, base_pred, element_ix, mtypes):
+    predicate = constant_to_dig_predicate(ref, match, base_pred)
+    items = dig_for_all(mapping, predicate, mtypes)
+    if len(items) == 0:
+        return None
+    if element_ix is None:
+        return items
+    return [item[element_ix] for item in items]
+
+
+def dig_for_values(mapping, ref, match="key", base_pred=eq, mtypes=(dict)):
+    return dig_all_wrapper(mapping, ref, match, base_pred, 1, mtypes)
+
+
+def dig_for_keys(mapping, ref, match="key", base_pred=eq, mtypes=(dict)):
+    return dig_all_wrapper(mapping, ref, match, base_pred, 0, mtypes)
+
+
+def dig_for_items(mapping, ref, match="key", base_pred=eq, mtypes=(dict)):
+    return dig_all_wrapper(mapping, ref, match, base_pred, None, mtypes)
+
+
+def dig_for(mapping, predicate, mtypes):
+    """
+    return the first item, using a breadth-first search, matching ref
+    """
+    level_items, nests = _evaluate_diglevel(mapping, predicate, mtypes)
+    if level_items:
+        return level_items
+    if not nests:
+        return None
+    dug, iternests = None, iter(nests)
+    while dug is None:
+        try:
+            dug = dig_for(next(iternests), predicate, mtypes)
+        except StopIteration:
+            return None
+    return dug
+
+
+def dig_wrapper(mapping, ref, match, base_pred, element_ix, mtypes):
+    predicate = constant_to_dig_predicate(ref, match, base_pred)
+    item = dig_for(mapping, predicate, mtypes)
+    if item is None:
+        return None
+    if element_ix is None:
+        return item[0]
+    return item[0][element_ix]
+
+
+def dig_for_value(mapping, ref, match="key", base_pred=eq, mtypes=(dict)):
+    return dig_wrapper(mapping, ref, match, base_pred, 1, mtypes)
+
+
+def dig_for_key(mapping, ref, match="key", base_pred=eq, mtypes=(dict)):
+    return dig_wrapper(mapping, ref, match, base_pred, 0, mtypes)
+
+
+def dig_for_item(mapping, ref, match="key", base_pred=eq, mtypes=(dict)):
+    return dig_wrapper(mapping, ref, match, base_pred, None, mtypes)
+
+
+def deepdig_for(mapping, ref):
+    """
+    greedy version of dig_for_first that always iterates through the
+    entire tree.
+    """
+    dug = dig_for_all(mapping, ref)
     if dug:
         return dug[0][1]
     return None
 
 
-def dig_for_values(mapping, target, predicate=eq):
-    dug = dig_for(mapping, target, predicate)
-    if dug:
-        return [level[1] for level in dug]
-    return []
-
-
 def dig_and_edit(
-    mapping,
-    target,
-    input_object=None,
-    predicate=eq,
-    value_set_function=None
-):
-    match_keys = [k for k in mapping.keys() if predicate(k, target)]
-    if value_set_function is None:
-        value_set_function = constant(input_object)
-    for key in match_keys:
-        mapping[key] = value_set_function(input_object, mapping[key])
-    nests = [v for v in mapping.values() if isinstance(v, MutableMapping)]
-    for nest in nests:
-        dig_and_edit(nest, target, input_object, predicate, value_set_function)
+    mapping: MutableMapping,
+    filter_func: Callable[[Any, Any], Any],
+    setter_func: Callable[[Any, Any], Any]
+) -> MutableMapping:
+    matches = tuple(filter(splat(filter_func), mapping.items()))
+    for key, value in matches:
+        mapping[key] = setter_func(key, value)
+    for nest in filter(is_it(MutableMapping), mapping.values()):
+        dig_and_edit(nest, filter_func, setter_func)
     return mapping
 
 
 # TODO: turn pivot.split_on into a dispatch function in structures,
 #  replace downstream
-def separate_by(collection, predicate):
+def separate_by(collection, ref):
     hits = []
     misses = []
     for item in collection:
-        if predicate(item) is True:
+        if ref(item) is True:
             hits.append(item)
         else:
             misses.append(item)

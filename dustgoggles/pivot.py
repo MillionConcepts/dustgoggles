@@ -23,6 +23,8 @@ def dupe_df_block(dataframe, rows_to_repeat):
     )
 
 
+# TODO, maybe: allow this to work with columns that have collections
+#  in individual cells
 def check_and_drop_duplicate_columns(dataframe):
     extra_columns = dataframe.columns[dataframe.columns.duplicated()]
     if len(extra_columns) == 0:

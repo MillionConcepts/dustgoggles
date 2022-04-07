@@ -2,7 +2,7 @@
 from functools import wraps, partial, reduce
 from itertools import accumulate, repeat
 from operator import add, contains, and_
-from typing import Callable, Iterable, Any
+from typing import Callable, Iterable, Any, Sequence
 
 
 def pass_parameters(func, *args, **kwargs):
@@ -83,3 +83,11 @@ def constant(value: Any) -> Callable:
         return value
 
     return return_constant
+
+
+def splat(func: Callable) -> Callable[[Sequence], Any]:
+    @wraps(func)
+    def splatified(args: Sequence) -> Any:
+        return func(*args)
+
+    return splatified
