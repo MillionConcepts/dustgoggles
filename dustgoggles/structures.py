@@ -137,6 +137,7 @@ def get_from(collection, keys, default=None):
             return default
     return level
 
+
 def constant_to_dig_predicate(putative_predicate, match="key", default=eq):
     if isinstance(putative_predicate, Callable):
         return putative_predicate
@@ -159,18 +160,6 @@ def valonly(func):
         return func(value)
     return onlyval
 
-EXTANT_MAPPINGS = [dict]
-try:
-    import bunny
-    EXTANT_MAPPINGS.append(bunny.Bunny)
-except ImportError:
-    pass
-try:
-    import multidict
-    EXTANT_MAPPINGS.append(multidict.MultiDict)
-except ImportError:
-    pass
-EXTANT_MAPPINGS = tuple(EXTANT_MAPPINGS)
 
 def _evaluate_diglevel(mapping, predicate, mtypes):
     # note: this is a little awkward and is done to circumvent the fact
@@ -201,15 +190,15 @@ def dig_all_wrapper(mapping, ref, match, base_pred, element_ix, mtypes):
     return [item[element_ix] for item in items]
 
 
-def dig_for_values(mapping, ref, match="key", base_pred=eq, mtypes=(dict)):
+def dig_for_values(mapping, ref, match="key", base_pred=eq, mtypes=(dict,)):
     return dig_all_wrapper(mapping, ref, match, base_pred, 1, mtypes)
 
 
-def dig_for_keys(mapping, ref, match="key", base_pred=eq, mtypes=(dict)):
+def dig_for_keys(mapping, ref, match="key", base_pred=eq, mtypes=(dict,)):
     return dig_all_wrapper(mapping, ref, match, base_pred, 0, mtypes)
 
 
-def dig_for_items(mapping, ref, match="key", base_pred=eq, mtypes=(dict)):
+def dig_for_items(mapping, ref, match="key", base_pred=eq, mtypes=(dict,)):
     return dig_all_wrapper(mapping, ref, match, base_pred, None, mtypes)
 
 
@@ -241,27 +230,16 @@ def dig_wrapper(mapping, ref, match, base_pred, element_ix, mtypes):
     return item[0][element_ix]
 
 
-def dig_for_value(mapping, ref, match="key", base_pred=eq, mtypes=(dict)):
+def dig_for_value(mapping, ref, match="key", base_pred=eq, mtypes=(dict,)):
     return dig_wrapper(mapping, ref, match, base_pred, 1, mtypes)
 
 
-def dig_for_key(mapping, ref, match="key", base_pred=eq, mtypes=(dict)):
+def dig_for_key(mapping, ref, match="key", base_pred=eq, mtypes=(dict,)):
     return dig_wrapper(mapping, ref, match, base_pred, 0, mtypes)
 
 
-def dig_for_item(mapping, ref, match="key", base_pred=eq, mtypes=(dict)):
+def dig_for_item(mapping, ref, match="key", base_pred=eq, mtypes=(dict,)):
     return dig_wrapper(mapping, ref, match, base_pred, None, mtypes)
-
-
-def deepdig_for(mapping, ref):
-    """
-    greedy version of dig_for_first that always iterates through the
-    entire tree.
-    """
-    dug = dig_for_all(mapping, ref)
-    if dug:
-        return dug[0][1]
-    return None
 
 
 def dig_and_edit(
