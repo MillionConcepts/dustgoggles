@@ -13,10 +13,6 @@ import re
 from typing import Callable, Iterable, Mapping, Optional, Union
 
 
-# TODO: some of this is in an ambiguous vendoring state with pdr;
-#  maybe eventually consolidate them here
-
-
 def make_scraper(label_text: str) -> Callable:
     """
     makes a little function that scrapes a particular text for patterns

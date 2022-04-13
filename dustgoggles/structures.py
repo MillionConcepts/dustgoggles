@@ -4,7 +4,7 @@ from copy import copy
 from functools import reduce, partial
 from operator import methodcaller, add, getitem, eq
 from typing import Mapping, Collection, Any, Union, Sequence, MutableMapping, \
-    Callable
+    Callable, Type
 
 from cytoolz import merge
 
@@ -245,12 +245,13 @@ def dig_for_item(mapping, ref, match="key", base_pred=eq, mtypes=(dict,)):
 def dig_and_edit(
     mapping: MutableMapping,
     filter_func: Callable[[Any, Any], Any],
-    setter_func: Callable[[Any, Any], Any]
+    setter_func: Callable[[Any, Any], Any],
+    mtypes: tuple[Type[MutableMapping]] = (dict,)
 ) -> MutableMapping:
     matches = tuple(filter(splat(filter_func), mapping.items()))
     for key, value in matches:
         mapping[key] = setter_func(key, value)
-    for nest in filter(is_it(MutableMapping), mapping.values()):
+    for nest in [v for v in mapping.values() if isinstance(v, mtypes)]:
         dig_and_edit(nest, filter_func, setter_func)
     return mapping
 

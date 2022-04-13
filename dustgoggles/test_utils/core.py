@@ -43,19 +43,21 @@ def random_nested_dict(
     quantity,
     maxdepth=4,
     types=(str, int, float, tuple),
+    keytypes=None,
     branch_weight=0.4
 ):
     nest = NestingDict()
     levels = tuple(range(maxdepth))
-    hashables = [t for t in types if isinstance(t, Hashable)]
+    if keytypes is None:
+        keytypes = [t for t in types if isinstance(t, Hashable)]
     for _ in range(quantity):
         level = RNG.choice(levels)
         keys = []
         for level_ix in range(level):
             keys.append(
-                pick_key_at_level(nest, keys, hashables, branch_weight)
+                pick_key_at_level(nest, keys, keytypes, branch_weight)
             )
         get_in(keys, nest)[
-            randval(RNG.choice(hashables))
+            randval(RNG.choice(keytypes))
         ] = randval(RNG.choice(types))
     return nest.todict()
