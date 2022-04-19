@@ -6,7 +6,7 @@ from typing import Any, Optional, Union
 
 from cytoolz import identity, compose
 
-from dustgoggles.func import triggerize
+from dustgoggles.func import triggerize, intersection
 from dustgoggles.structures import reindex_mapping, enumerate_as_mapping
 
 
@@ -32,14 +32,14 @@ class Composition:
     """
 
     def __init__(
-        self,
-        steps: Optional[
-            Union[Mapping[Any, Callable], Sequence[Callable]]
-        ] = None,
-        parameters: Optional[Mapping] = None,
-        sends: Optional[Mapping[Any, Callable]] = None,
-        inserts: Optional[Mapping] = None,
-        captures: Optional[Mapping] = None,
+            self,
+            steps: Optional[
+                Union[Mapping[Any, Callable], Sequence[Callable]]
+            ] = None,
+            parameters: Optional[Mapping] = None,
+            sends: Optional[Mapping[Any, Callable]] = None,
+            inserts: Optional[Mapping] = None,
+            captures: Optional[Mapping] = None,
     ):
         if steps is None:
             steps = [identity]
@@ -60,12 +60,10 @@ class Composition:
 
     def _check_for_step(self, step_name: Hashable) -> Any:
         if step_name not in self.steps.keys():
-            raise KeyError(
-                str(step_name) + " is not an element of the pipeline."
-            )
+            raise KeyError(f"{step_name} is not an element of the pipeline.")
         return self.steps[step_name]
 
-    def bind_args(self, step_name, *args, rebind=False,  **kwargs):
+    def bind_args(self, step_name, *args, rebind=False, **kwargs):
         if (not args) and (not kwargs):
             return
         step = self._check_for_step(step_name)
@@ -90,7 +88,7 @@ class Composition:
         if (rebind is True) and ("func" in dir(step)):
             step = step.func
         if (rebind is True) or (
-            not isinstance(self.parameters.get("step_name"), Mapping)
+                not isinstance(self.parameters.get("step_name"), Mapping)
         ):
             self.parameters[step_name] = kwargs
         else:
@@ -136,21 +134,25 @@ class Composition:
 
         if (self.steps.get("name") is not None) and (replace is False):
             raise KeyError(
-                "there's already a step named "
-                + str(name)
-                + ". Pass 'replace=True' if you want to reuse this name."
+                f"there's already a step named {name}. Pass 'replace=True' "
+                f"if you want to reuse this name."
             )
         self.steps[name] = step
 
-    def add_aux(self, aux, aux_type, step_name=None, replace=False):
+    def add_aux(
+            self,
+            aux,
+            aux_type,
+            step_name=None,
+            replace=False,
+            capture_name=None
+    ):
         assert aux_type in ("send", "insert", "capture"), (
-            "I don't know " + aux_type + " as a type of auxiliary block."
+            f"I don't know {aux_type} as a type of auxiliary block."
         )
         if self.steps == {}:
             raise KeyError(
-                "At least one step must be defined to place a(n) "
-                + aux_type
-                + " ."
+                f"At least one step must be defined to place a(n) {aux_type}."
             )
         if step_name is None:
             step_name = next(reversed(self.steps))
@@ -163,28 +165,30 @@ class Composition:
             aux_dict[step_name] = compose(aux, aux_dict[step_name])
         elif replace is False:
             raise KeyError(
-                "there's already a(n) "
-                + aux_type
-                + " attached to "
-                + str(step_name)
-                + ". Pass replace=True or replace='compose' if you want to "
-                + "add more things here."
-                + aux_type
-                + "."
+                f"there's already a(n) {aux_type} attached to {step_name}. "
+                f"Pass replace=True or replace='compose' if you want to add "
+                f"more things here."
             )
         else:
             raise ValueError("I don't recognize that replacement type.")
 
-    def add_send(self, send, step_name=None, replace=False):
-        """adds a send to the pipeline after step_name"""
-        self.add_aux(send, "send", step_name, replace)
+    def add_send(
+            self, send, step_name=None, replace=False, capture_name=None
+    ):
+        """
+        adds a send to the pipeline after step_name; sends to the named
+        capture point. if no capture point is given, sends to nowhere
+        (although may still obviously have side effects!)
+        """
+        self.add_aux(send, "send", step_name, replace, capture_name)
 
     def add_capture(self, step_name, replace=False):
         """
-        adds a capture point to the pipeline after step_name; if a send is
-        present, sends the output of the send there
+        convenience wrapper for add_send: makes a simple capture point
+        after a step that simply caches the output of that step without
+        modification
         """
-        self.add_aux(None, "capture", step_name, replace)
+        self.add_aux(identity, "send", step_name, replace, step_name)
 
     def add_trigger(self, trigger, step_name=None, replace=False):
         """convenience wrapper for add_send"""
@@ -195,8 +199,26 @@ class Composition:
         """adds an insert to the pipeline before step_name"""
         self.add_aux(insert, "insert", step_name, replace)
 
-    def add_loop(self, loop, step_after, step_before, replace=False):
-        raise NotImplementedError
+    def add_return(
+            self,
+            return_function,
+            captures,
+            return_step=None,
+            replace=False
+    ):
+        buses = list(self.steps.keys()) + list(self.captures.keys())
+        if return_step is None:
+            return_step = next(reversed(self.steps))
+        if not set(captures).issubset(set(buses)):
+            raise KeyError(
+                f"can't use a step / capture that doesn't exist as a "
+                f"source for a return: {set(captures).difference(set(buses))}"
+            )
+        for capture in captures:
+            # add a bus if it's not there; create a new type of insert
+            # that feeds their contents back at the
+            # correct step. simply has a very dull signature
+            pass
 
     def reindex(self):
         self.steps = reindex_mapping(self.steps)
@@ -226,7 +248,7 @@ class Composition:
         return list(map(attrgetter("__name__"), self.steps.values()))
 
     def _process_insert_parameters(
-        self, step_name, rt_insert_chain, rt_insert_kwargs
+            self, step_name, rt_insert_chain, rt_insert_kwargs
     ):
         insert_args = ()
         insert_kwargs = {}
@@ -244,7 +266,6 @@ class Composition:
         send pipeline state to send function, if one matching this step name
         exists. unlike inserts, there is currently no provision for sends with
         value None; there probably should not be.
-
         """
         if self.sends.get(step_name) is None:
             return state
@@ -276,11 +297,11 @@ class Composition:
     #  this is basically a way to create returns.
     #  or actually: it's possibly better not even as a generator?
     def itercall(
-        self,
-        signal: Any = None,
-        *rt_insert_args,
-        rt_insert_kwargs: Mapping[Any] = None,
-        **special_kwargs
+            self,
+            signal: Any = None,
+            *rt_insert_args,
+            rt_insert_kwargs: Mapping[Any] = None,
+            **special_kwargs
     ):
         rt_insert_chain, rt_insert_kwargs = self._get_ready(
             rt_insert_args, rt_insert_kwargs, special_kwargs
@@ -293,11 +314,11 @@ class Composition:
             yield state
 
     def execute(
-        self,
-        signal: Any = None,
-        *rt_insert_args,
-        rt_insert_kwargs: Mapping[Any] = None,
-        **special_kwargs
+            self,
+            signal: Any = None,
+            *rt_insert_args,
+            rt_insert_kwargs: Mapping[Any] = None,
+            **special_kwargs
     ):
         """
         execute the pipeline, initializing it with signal.
@@ -322,16 +343,16 @@ class Composition:
     def __str__(self):
         me_string = ""
         for attribute in (
-            "steps",
-            "parameters",
-            "sends",
-            "inserts",
-            "captures",
+                "steps",
+                "parameters",
+                "sends",
+                "inserts",
+                "captures",
         ):
             if not getattr(self, attribute):
                 continue
             me_string += (
-                attribute + ":\n" + getattr(self, attribute).__repr__() + "\n"
+                f"{attribute}:\n{getattr(self, attribute).__repr__()}\n"
             )
         if not me_string:
             return "empty Composition"
@@ -339,7 +360,6 @@ class Composition:
 
     def __repr__(self):
         return self.__str__()
-
 
 # class IterPipeline:
 #     def __init__(
@@ -355,3 +375,4 @@ class Composition:
 #         self.runtime_insert_chain = chain(rt_insert_args, repeat(None))
 #         self.rt_insert_kwargs = rt_insert_kwargs
 #       ...
+g
