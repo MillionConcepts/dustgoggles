@@ -2,10 +2,9 @@ import ast
 import json
 from multiprocessing.shared_memory import SharedMemory
 import pickle
-from typing import Any, Callable, Mapping, Union
+from typing import Any, Callable, Mapping
 
 from dustgoggles.codex.memutilz import create_block, fetch_block_bytes
-from dustgoggles.func import zero
 
 
 def json_codec_factory() -> tuple[Callable, Callable]:
@@ -67,11 +66,28 @@ def json_pickle_codec_factory():
     return encode, decode
 
 
-def generic_mnemonic_factory() -> tuple[Callable, Callable]:
+def generic_mnemonic_factory():
+    """
+    generate a pair of save / load functions that can be used to send and
+    retrieve objects from shared memory. this is a general-purpose mnemonic
+    that will work for many sorts of objects. these save / load functions can
+    be partially evaluated to create bound methods (see objects in
+    codex.implements). alternatively, different encoders, decoders, address
+    schemes, etc. can be dynamically passed into these functions at runtime.
+    """
 
     def memorize(
-         value: Any, address: str, exists_ok: bool, encode: Callable
+        value: Any,
+        address: str,
+        exists_ok: bool,
+        encode: Callable[[Any], bytes]
     ) -> str:
+        """
+        serialize `value` using `encode` and place it into a shared memory
+        block at `address`. If a block already exists at `address` and
+        exists_ok is not True, will raise a FileExistsError. returns
+        `address`.
+        """
         encoded = encode(value)
         size = len(encoded)
         block = create_block(address, size, exists_ok)
@@ -79,14 +95,18 @@ def generic_mnemonic_factory() -> tuple[Callable, Callable]:
         return address
 
     def remember(
-        metadata: str, fetch: bool = True, decode: Callable = zero
+        address: str,
+        decode: Callable[[bytes], Any],
+        fetch: bool = True
     ) -> Any:
+        """
+        open the shared memory block at `address`. if `fetch` is False,
+        return the block itself. otherwise, copy the bytes into memory,
+        decode them with `decode`, and return the result.
+        """
         if fetch is False:
-            return SharedMemory(name=metadata)
-        stream = fetch_block_bytes(metadata)
-        if stream is None:
-            return stream
-        return decode(stream)
+            return SharedMemory(name=address)
+        return decode(fetch_block_bytes(address))
 
     return memorize, remember
 
@@ -114,7 +134,7 @@ def numpy_mnemonic_factory() -> tuple[Callable, Callable]:
         }
 
     def remember_array(
-        metadata: Mapping, fetch: bool = True, copy=True
+        metadata: Mapping, fetch: bool = True, copy: bool = True
     ):
         block = SharedMemory(name=metadata["name"])
         if fetch is False:

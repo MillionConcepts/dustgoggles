@@ -132,7 +132,7 @@ class DictIndex(ShareableIndex):
             memorize, address=self.name, exists_ok=True, encode=encode
         )
         self.remember = partial(
-            remember, metadata=self.name, fetch=True, decode=decode
+            remember, address=self.name, fetch=True, decode=decode
         )
         self._cache = {}
         if create is True:
