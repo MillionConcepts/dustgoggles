@@ -1,17 +1,20 @@
 from abc import abstractmethod, ABC
 import atexit
-import time
 from functools import partial
 from multiprocessing.shared_memory import ShareableList, SharedMemory
 from random import randint, randbytes
+import time
 from typing import Any, Union, Optional, Callable
 
 from dustgoggles.codex.codecs import (
-    json_pickle_codec_factory, generic_mnemonic_factory,
-    numpy_mnemonic_factory, json_codec_factory, ast_codec_factory
+    generic_mnemonic_factory,
+    json_codec_factory,
+    json_pickle_codec_factory,
+    numpy_mnemonic_factory,
 )
-from dustgoggles.codex.memutilz import create_block, fetch_block_bytes, \
-    exists_block, delete_block
+from dustgoggles.codex.memutilz import (
+    create_block, fetch_block_bytes, delete_block, exists_block
+)
 
 
 class LockoutTagout:
@@ -51,7 +54,7 @@ class LockoutTagout:
 
 class ShareableIndex(ABC):
 
-    def __init__(self, name=None, create=False, cleanup_on_exit=True, **_):
+    def __init__(self, name=None, create=False, cleanup_on_exit=False, **_):
         if create is False:
             if not exists_block(name):
                 raise FileNotFoundError(
@@ -94,7 +97,8 @@ class DictIndex(ShareableIndex):
     note that object keys must be strings -- integers, floats, etc.
     will be converted to strings by json serialization / deserialization.
     """
-    def __init__(self, name=None, create=False, cleanup_on_exit=True):
+
+    def __init__(self, name=None, create=False, cleanup_on_exit=False):
         super().__init__(name, create, cleanup_on_exit)
         memorize, remember = generic_mnemonic_factory()
         encode, decode = json_codec_factory()
@@ -138,7 +142,7 @@ class DictIndex(ShareableIndex):
         self.loto.release()
         self.memory = SharedMemory(self.name)
 
-    def add(self, key, value = None):
+    def add(self, key, value=None):
         self[key] = value
 
     def __delitem__(self, key):
@@ -160,13 +164,14 @@ class ListIndex(ShareableIndex):
     """
     limited but fast index based on multiprocessing.shared_memory.ShareableList
     """
+
     def __init__(
-        self,
-        name=None,
-        create=False,
-        cleanup_on_exit=True,
-        length=64,
-        max_characters=64,
+            self,
+            name=None,
+            create=False,
+            cleanup_on_exit=False,
+            length=64,
+            max_characters=64,
     ):
         super().__init__(name, create, cleanup_on_exit)
         if create is False:
@@ -225,14 +230,14 @@ class ListIndex(ShareableIndex):
 
 class AbstractNotepad(ABC):
     def __init__(
-        self,
-        prefix=None,
-        create=False,
-        cleanup_on_exit=True,
-        index_type = None,
-        codec_factory: Optional[Callable] = None,
-        mnemonic_factory: Optional[Callable] = None,
-        **index_kwargs
+            self,
+            prefix=None,
+            create=False,
+            cleanup_on_exit=False,
+            index_type=None,
+            codec_factory: Optional[Callable] = None,
+            mnemonic_factory: Optional[Callable] = None,
+            **index_kwargs
     ):
         if prefix is None:
             prefix = randint(100000, 999999)
@@ -336,15 +341,16 @@ class AbstractNotepad(ABC):
 
 class Notepad(AbstractNotepad):
     """generic read-write cache"""
+
     def __init__(
-        self,
-        prefix=None,
-        create=False,
-        cleanup_on_exit=True,
-        index_type = ListIndex,
-        codec_factory=json_pickle_codec_factory,
-        mnemonic_factory=generic_mnemonic_factory,
-        **index_kwargs
+            self,
+            prefix=None,
+            create=False,
+            cleanup_on_exit=False,
+            index_type=ListIndex,
+            codec_factory=json_pickle_codec_factory,
+            mnemonic_factory=generic_mnemonic_factory,
+            **index_kwargs
     ):
         super().__init__(
             prefix,
@@ -429,7 +435,7 @@ class Notepad(AbstractNotepad):
 
 class GridPaper(AbstractNotepad):
 
-    def __init__(self, prefix=None, create=False, cleanup_on_exit=True):
+    def __init__(self, prefix=None, create=False, cleanup_on_exit=False):
         # noinspection PyTypeChecker
         super().__init__(
             prefix,
@@ -483,8 +489,6 @@ class GridPaper(AbstractNotepad):
         raise NotImplementedError("Try using the iteritems method for now")
 
     def dump(self, key, fn=None):
-        import numpy as np
-
         if fn is None:
             fn = f"{self.prefix}_{key}".replace(".", "_")
         self[key].tofile(fn)
@@ -525,31 +529,30 @@ class GridPaper(AbstractNotepad):
 
 class Sticky:
     def __init__(
-        self,
-        address=None,
-        readonly=True,
-        value=None,
-        cleanup_on_exit=True
+            self,
+            address=None,
+            # readonly=True,
+            value=None,
+            cleanup_on_exit=False
     ):
         self.address = str(address)
         self.encode, self.decode = json_pickle_codec_factory()
         self._cached_value = value
-        self.readonly = readonly
+        # self.readonly = readonly
         if cleanup_on_exit is True:
             atexit.register(self.close)
 
     @classmethod
     def note(
-        cls,
-        obj,
-        address=None,
-        exists_ok=False,
-        readonly=True,
-        cleanup_on_exit=True
+            cls,
+            obj,
+            address=None,
+            # readonly=True,
+            cleanup_on_exit=False
     ):
         init_kwargs = {
             'value': obj,
-            'readonly': readonly,
+            # 'readonly': readonly,
             'address': str(address),
             'cleanup_on_exit': cleanup_on_exit
         }
@@ -560,10 +563,7 @@ class Sticky:
         return note
 
     def read(self, reread=False):
-        if (
-                (self._cached_value is not None)
-                and (reread is False)
-        ):
+        if (self._cached_value is not None) and (reread is False):
             return self._cached_value
         try:
             block = SharedMemory(self.address)
