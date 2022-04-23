@@ -1,3 +1,29 @@
+"""
+high-level abstractions for working with Python shared memory.
+
+notes
+----
+
+1. on the cleanup_on_exit kwarg:
+If SharedMemory objects are instantiated in a top-level process,
+especially in the __main__ namespace, the multiprocessing.resource_tracker
+process generally does a good job of cleaning them up. However, sometimes we
+need a little more manual control for the following reasons:
+1) blocks initially created in child processes may not always be cleanly and
+automatically unlinked, particularly if the parent process is very
+long-running
+2) on Mac and Linux, multiprocessing.resource_tracker often does _too_
+enthusiastic a job of unlinking SharedMemory objects, making them unstable
+when used by processes that do not share a parent, so you might want to
+deactivate it: see deactivate_shared_memory_resource_tracker() in
+dustgoggles.codex.memutilz. If you do that, but you don't _want_ to create a
+memory leak -- which you might, if you are trying to make a persistent
+in-memory object cache, but in most cases you probably don't -- someone has
+to clean these objects up manually. cleanup_on_exit is a convenient way to
+do that. but bear in mind that it still won't effectively clean up in the
+event of some kinds of hard crash of the process!
+"""
+
 from abc import abstractmethod, ABC
 import atexit
 from functools import partial
@@ -63,10 +89,9 @@ class ShareableIndex(ABC):
                     f"create=True if you want to initialize a new index."
                 )
         self.loto = LockoutTagout(name)
-        # if SharedMemory objects are instantiated in __main__,
-        # multiprocessing.util._exit_function() generally does a good job
-        # of cleaning them up. however, blocks created in child processes
-        # will often not be cleanly and automatically unlinked. hence:
+        """
+
+        """
         if cleanup_on_exit is True:
             atexit.register(self.close)
 
