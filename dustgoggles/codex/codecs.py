@@ -1,8 +1,7 @@
 import ast
 import json
-import pickle
-import sys
 from multiprocessing.shared_memory import SharedMemory
+import pickle
 from typing import Any, Callable, Mapping
 
 from dustgoggles.codex.memutilz import create_block, fetch_block_bytes
@@ -16,6 +15,7 @@ def json_codec_factory():
     def decode(value):
         return json.loads(value.decode())
     return encode, decode
+
 
 def ast_codec_factory():
     def encode(value):
@@ -74,7 +74,7 @@ def numpy_mnemonic_factory() -> tuple[Callable, Callable]:
     import numpy as np
 
     def memorize_array(
-        array: np.ndarray, address: str, exists_ok: bool, _: Any = zero
+        array: np.ndarray, address: str, exists_ok: bool
     ) -> dict:
         block = create_block(address, array.size * array.itemsize, exists_ok)
         shared_array = np.ndarray(
@@ -89,7 +89,7 @@ def numpy_mnemonic_factory() -> tuple[Callable, Callable]:
         }
 
     def remember_array(
-        metadata: Mapping, fetch: bool=True, copy=True
+        metadata: Mapping, fetch: bool = True, copy=True
     ):
         block = SharedMemory(name=metadata["name"])
         if fetch is False:
