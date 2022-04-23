@@ -1,18 +1,17 @@
 from abc import abstractmethod, ABC
 import atexit
 import time
+from functools import partial
 from multiprocessing.shared_memory import ShareableList, SharedMemory
 from random import randint, randbytes
-from typing import Any
+from typing import Any, Union, Optional, Callable
 
-from dustgoggles.codex.array_codecs import numpy_encoder, numpy_decoder
 from dustgoggles.codex.codecs import (
-    json_pickle_encoder,
-    json_pickle_decoder,
-    remember_generic,
-    memorize_generic
+    json_pickle_codec_factory, generic_mnemonic_factory,
+    numpy_mnemonic_factory, json_codec_factory, ast_codec_factory
 )
-from dustgoggles.codex.memutilz import create_block, fetch_block_bytes
+from dustgoggles.codex.memutilz import create_block, fetch_block_bytes, \
+    exists_block, delete_block
 
 
 class LockoutTagout:
@@ -32,14 +31,14 @@ class LockoutTagout:
             tag = self.lock.buf.tobytes()
             if tag == self.tag:
                 acquired = True
-            elif tag == b"\x00\x00\x00\x00":
+            elif tag == b"\x00\x00\x00\x00\x00":
                 self.lock.buf[:] = self.tag
             # the extra loop here is for a possibly-unnecessary double check
             # that someone else didn't write their key to the lock at the
             # exact same time.
             else:
                 time_waiting += increment
-                if increment > timeout:
+                if time_waiting > timeout:
                     raise TimeoutError("timed out waiting for lock")
                 time.sleep(increment)
 
@@ -47,15 +46,30 @@ class LockoutTagout:
         tag = self.lock.buf.tobytes()
         if (tag != self.tag) and (release_only_mine is True):
             raise ConnectionRefusedError
-        self.lock.buf[:] = b"\x00\x00\x00\x00"
+        self.lock.buf[:] = b"\x00\x00\x00\x00\x00"
 
 
 class ShareableIndex(ABC):
 
-    def __init__(self, name=None, cleanup_on_exit=True):
+    def __init__(self, name=None, create=False, cleanup_on_exit=True, **_):
+        if create is False:
+            if not exists_block(name):
+                raise FileNotFoundError(
+                    f"Shared memory block {name} does not exist and "
+                    f"create=False passed. Construct this index with "
+                    f"create=True if you want to initialize a new index."
+                )
         self.loto = LockoutTagout(name)
+        # if SharedMemory objects are instantiated in __main__,
+        # multiprocessing.util._exit_function() generally does a good job
+        # of cleaning them up. however, blocks created in child processes
+        # will often not be cleanly and automatically unlinked. hence:
         if cleanup_on_exit is True:
             atexit.register(self.close)
+
+    @abstractmethod
+    def update(self, sync):
+        pass
 
     @abstractmethod
     def add(self, key, value=None):
@@ -66,10 +80,6 @@ class ShareableIndex(ABC):
         pass
 
     @abstractmethod
-    def update(self):
-        pass
-
-    @abstractmethod
     def close(self):
         pass
 
@@ -77,22 +87,94 @@ class ShareableIndex(ABC):
         return self.__delitem__(key)
 
 
-class DictIndex(LockoutTagout):
-    pass
-
-
-class ShareableListIndex(ShareableIndex):
+class DictIndex(ShareableIndex):
     """
-    limited but very fast index using
-    multiprocessing.shared_memory.ShareableList
+    very simple index based on dumping json into a shared memory block.
+
+    note that object keys must be strings -- integers, floats, etc.
+    will be converted to strings by json serialization / deserialization.
+    """
+    def __init__(self, name=None, create=False, cleanup_on_exit=True):
+        super().__init__(name, create, cleanup_on_exit)
+        memorize, remember = generic_mnemonic_factory()
+        encode, decode = json_codec_factory()
+        self.name = name
+        self.memorize = partial(
+            memorize, address=self.name, exists_ok=True, encode=encode
+        )
+        self.remember = partial(
+            remember, metadata=self.name, fetch=True, decode=decode
+        )
+        self._cache = {}
+        if create is True:
+            self.memorize({})
+            self.memory = SharedMemory(self.name)
+
+    def update(self, sync=True):
+        if sync is True:
+            self._cache = self.remember()
+        return self._cache
+
+    def keys(self):
+        return self.update().keys()
+
+    def values(self):
+        return self.update().values()
+
+    def __getitem__(self, key):
+        return self.update()[key]
+
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+    def __setitem__(self, key, value):
+        self.loto.acquire()
+        dictionary = self.update()
+        dictionary[key] = value
+        self.memorize(dictionary)
+        self.loto.release()
+        self.memory = SharedMemory(self.name)
+
+    def add(self, key, value = None):
+        self[key] = value
+
+    def __delitem__(self, key):
+        self.loto.acquire()
+        dictionary = self.update()
+        del dictionary[key]
+        self.memorize(dictionary)
+        self.loto.release()
+        self.memory = SharedMemory(self.name)
+
+    def close(self):
+        for block in (self.loto.lock, SharedMemory(self.name)):
+            block.unlink()
+            block.close()
+        atexit.unregister(self.close)
+
+
+class ListIndex(ShareableIndex):
+    """
+    limited but fast index based on multiprocessing.shared_memory.ShareableList
     """
     def __init__(
-        self, name=None, length=256, max_characters=128
+        self,
+        name=None,
+        create=False,
+        cleanup_on_exit=True,
+        length=64,
+        max_characters=64,
     ):
-        super().__init__(name)
-        self.memory = ShareableList(
-            [b"\x00" * max_characters for _ in range(length)], name=name
-        )
+        super().__init__(name, create, cleanup_on_exit)
+        if create is False:
+            self.memory = ShareableList(name)
+        else:
+            self.memory = ShareableList(
+                [b"\x00" * max_characters for _ in range(length)], name=name
+            )
         self._cache = []
         self.length = 0
 
@@ -107,7 +189,7 @@ class ShareableListIndex(ShareableIndex):
                     break
                 self._cache.append(key)
             self.length = ix
-        return self._cache
+        return tuple(self._cache)
 
     def add(self, key, value=None):
         if value is not None:
@@ -141,85 +223,183 @@ class ShareableListIndex(ShareableIndex):
         atexit.unregister(self.close)
 
 
-
-# TODO: we could have the index stored at some other randomized address, but
-#  i very much like the idea of these classes being portable between processes
-#  by referencing only a single string
-class Paper:
-    """parent class for notes. defines only index methods."""
-
-    def __init__(self, prefix):
-        super().__init__()
+class AbstractNotepad(ABC):
+    def __init__(
+        self,
+        prefix=None,
+        create=False,
+        cleanup_on_exit=True,
+        index_type = None,
+        codec_factory: Optional[Callable] = None,
+        mnemonic_factory: Optional[Callable] = None,
+        **index_kwargs
+    ):
+        if prefix is None:
+            prefix = randint(100000, 999999)
         self.prefix = prefix
-        self._index_cache = []
-        self._index_length = 0
+        if mnemonic_factory is not None:
+            self.memorize, self.remember = mnemonic_factory()
+        if codec_factory is not None:
+            if mnemonic_factory is None:
+                raise TypeError("can't specify codec without a mnemonic")
+            encode, decode = codec_factory()
+            self.memorize = partial(self.memorize, encode=encode)
+            self.remember = partial(self.remember, decode=decode)
+        if index_type is None:
+            raise TypeError("must specify an index type")
+        try:
+            self.index = index_type(
+                f"{prefix}_index", create, cleanup_on_exit, **index_kwargs
+            )
+            self.update_index()
+        except FileNotFoundError:
+            raise FileNotFoundError(
+                "the index space for this object has not been initialized "
+                "(or has been deleted) and create=False was passed. Try "
+                "constructing this object with create=True."
+            )
+        atexit.register(self.close)
+
+    def get_raw(self, key):
+        return fetch_block_bytes(self.address(key))
 
     def address(self, key):
         return f"{self.prefix}_{key}"
 
-    def _index_memory(self):
-        return ShareableList(name=self.address("index"))
+    def update_index(self, sync=True) -> Union[dict, tuple]:
+        return self.index.update(sync)
 
-    def index(self, sync=True):
-        if sync is True:
-            # TODO: optimize all this stuff with lookahead and lookbehind
-            #  for speed, etc.
-            self._index_cache = []
-            ix = 0
-            for ix, key in enumerate(self._index_memory()):
-                if key == b"":
-                    break
-                self._index_cache.append(key)
-            self._index_length = ix
-        return self._index_cache
+    @abstractmethod
+    def __getitem__(self, key):
+        pass
 
+    @abstractmethod
+    def get(self, key, default, fetch):
+        pass
+
+    @abstractmethod
+    def __setitem__(self, key, value, exists_ok: bool = True):
+        pass
+
+    @abstractmethod
+    def set(self, key, value, exists_ok: bool = True):
+        pass
+
+    def keys(self):
+        return self.update_index()
+
+    @abstractmethod
+    def values(self):
+        pass
+
+    @abstractmethod
+    def items(self):
+        pass
+
+    def iterkeys(self):
+        for key in self.update_index():
+            yield key
+
+    def itervalues(self):
+        """return an iterator over entries in the cache"""
+        for key in self.update_index():
+            yield self[key]
+
+    def iteritems(self):
+        """return an iterator over key / value pairs in the cache"""
+        for key in self.update_index():
+            yield key, self[key]
+
+    @abstractmethod
+    def __delitem__(self, key):
+        pass
+
+    @abstractmethod
+    def dump(self, key, fn):
+        pass
+
+    @abstractmethod
+    def close(self, dump):
+        pass
+
+    @abstractmethod
+    def clear(self):
+        pass
+
+    @abstractmethod
     def __str__(self):
-        return f"{self.__class__.__name__} with keys {self.index()}"
+        pass
 
     def __repr__(self):
         return self.__str__()
 
 
-# TODO: dumb version without an index for faster assignment
+class Notepad(AbstractNotepad):
+    """generic read-write cache"""
+    def __init__(
+        self,
+        prefix=None,
+        create=False,
+        cleanup_on_exit=True,
+        index_type = ListIndex,
+        codec_factory=json_pickle_codec_factory,
+        mnemonic_factory=generic_mnemonic_factory,
+        **index_kwargs
+    ):
+        super().__init__(
+            prefix,
+            create,
+            cleanup_on_exit,
+            index_type,
+            codec_factory,
+            mnemonic_factory,
+            **index_kwargs
+        )
 
+    def __getitem__(self, key, fetch=True):
+        result = self.remember(self.address(key), fetch)
+        if result is None:
+            raise KeyError
+        return result
 
-class NoteViewer(Paper):
-    """read-only notepad"""
+    def get(self, key, default=None, fetch=True):
+        try:
+            return self.__getitem__(key, fetch)
+        except KeyError:
+            return default
 
-    def __init__(self, prefix, decoder=json_pickle_decoder):
-        super().__init__(prefix)
-        self.decoder = decoder
+    def __setitem__(self, key, value, exists_ok: bool = True):
+        if key in (["index", "index_lock"]):
+            raise KeyError("'index' and 'index_lock' are reserved key names")
+        try:
+            self.memorize(value, self.address(key), exists_ok)
+        except FileExistsError:
+            raise KeyError(
+                f"{key} already exists in this object's cache. pass "
+                f"exists_ok=True to overwrite it."
+            )
+        if key not in self.update_index():
+            self.index.add(key)
 
-    def get_raw(self, key):
-        return fetch_block_bytes(self.address(key))
+    def set(self, key: str, value: Any, exists_ok: bool = True):
+        return self.__setitem__(key, value, exists_ok)
 
-    # TODO: should I raise errors instead of returning none for missing keys
-    #  when accessed with slice notation? that is more 'standard'
-    def __getitem__(self, key, decoder=json_pickle_decoder):
-        stream = self.get_raw(key)
-        if stream is None:
-            return stream
-        return decoder(stream)
+    def __delitem__(self, key):
+        if key in (["index", "index_lock"]):
+            raise KeyError("'index' and 'index_lock' are reserved key names")
+        try:
+            delete_block(self.address(key))
+            self.index.remove(key)
+        except FileNotFoundError:
+            raise KeyError(f"{key} not apparently assigned")
 
-    def get(self, key):
-        return self.__getitem__(key)
+    def values(self):
+        # TODO: something with MemoryViews?
+        raise NotImplementedError("Try using the itervalues method for now")
 
-    def keys(self):
-        return self.index()
-
-    def iterkeys(self):
-        for key in self.index():
-            yield key
-
-    def itervalues(self):
-        """return an iterator over entries in the cache"""
-        for key in self.index():
-            yield self[key]
-
-    def iteritems(self):
-        """return an iterator over key / value pairs in the cache"""
-        for key in self.index():
-            yield key, self[key]
+    def items(self):
+        # TODO: something with MemoryViews?
+        raise NotImplementedError("Try using the iteritems method for now")
 
     def dump(self, key, fn=None, mode="wb"):
         if fn is None:
@@ -228,143 +408,131 @@ class NoteViewer(Paper):
             # noinspection PyTypeChecker
             file.write(self.get_raw(key))
 
+    def close(self, dump=False):
+        for key in self.update_index():
+            if dump is True:
+                self.dump(key)
+            del self[key]
+        self.index.close()
+        atexit.unregister(self.close)
 
-class Notepad(NoteViewer):
-    """full read-write notepad"""
+    def clear(self):
+        for key in self.update_index():
+            del self[key]
 
-    def __init__(
-            self,
+    def __str__(self):
+        return f"{self.__class__.__name__} with keys {self.update_index()}"
+
+    def __repr__(self):
+        return self.__str__()
+
+
+class GridPaper(AbstractNotepad):
+
+    def __init__(self, prefix=None, create=False, cleanup_on_exit=True):
+        # noinspection PyTypeChecker
+        super().__init__(
             prefix,
-            encoder=json_pickle_encoder,
-            decoder=json_pickle_decoder,
-            memorizer=memorize_generic,
-            recaller=remember_generic
-    ):
-        super().__init__(prefix, decoder)
-        try:
-            self.index()
-        except FileNotFoundError:
-            raise FileNotFoundError(
-                "the memory space for this Notepad has not been initialized "
-                "(or has been deleted). Try constructing it with "
-                "Notepad.open()."
-            )
-        self.encoder = encoder
-        self.decoder = decoder
-        self.memorize = memorizer
-        self.recall = recaller
-        self._lock_key = randbytes(4)
+            create,
+            cleanup_on_exit,
+            index_type=DictIndex,
+            mnemonic_factory=numpy_mnemonic_factory
+        )
+        self._open_blocks = []
 
-    def __setitem__(self, key: str, value: Any, exists_ok: bool = True):
+    def __getitem__(self, key, fetch=True, copy=True):
+        try:
+            result, block = self.remember(self.index[key], fetch, copy)
+            if copy is False:
+                self._open_blocks.append(block)
+        except FileNotFoundError:
+            raise KeyError(f"{key} not found in this object's space.")
+        return result
+
+    def get(self, key, default=None, fetch=True, copy=False):
+        try:
+            return self.__getitem__(key, fetch, copy)
+        except KeyError:
+            return default
+
+    def __setitem__(self, key, value, exists_ok: bool = True):
         if key in (["index", "index_lock"]):
             raise KeyError("'index' and 'index_lock' are reserved key names")
         try:
-            self.memorize(self.address(key), value, self.encoder, exists_ok)
+            metadata = self.memorize(value, self.address(key), exists_ok)
         except FileExistsError:
             raise KeyError(
                 f"{key} already exists in this object's cache. pass "
                 f"exists_ok=True to overwrite it."
             )
-        if key not in self.index():
-            self._add_index_key(self.address(key))
+        if key not in self.update_index():
+            self.index[key] = metadata
+
+    def _add_index_key(self, key):
+        raise TypeError
+
+    def set(self, key, value, exists_ok: bool = True):
+        return self.__setitem__(key, value, exists_ok)
+
+    def values(self):
+        # TODO: something with MemoryViews?
+        raise NotImplementedError("Try using the itervalues method for now")
+
+    def items(self):
+        # TODO: something with MemoryViews?
+        raise NotImplementedError("Try using the iteritems method for now")
+
+    def dump(self, key, fn=None):
+        import numpy as np
+
+        if fn is None:
+            fn = f"{self.prefix}_{key}".replace(".", "_")
+        self[key].tofile(fn)
 
     def __delitem__(self, key):
         if key in (["index", "index_lock"]):
             raise KeyError("'index' and 'index_lock' are reserved key names")
         try:
-            block = SharedMemory(self.address(key))
-            block.unlink()
-            block.close()
-            self._remove_index_key(key)
+            delete_block(self.address(key))
+            self.index.remove(key)
+            for block in self._open_blocks:
+                if block.name == key:
+                    block.close()
+                    block.unlink()
         except FileNotFoundError:
             raise KeyError(f"{key} not apparently assigned")
 
-    def set(self, key, value):
-        return self.__setitem__(key, value)
-
     def close(self, dump=False):
-        for key in self.index():
+        for key in self.update_index():
             if dump is True:
                 self.dump(key)
             del self[key]
-        for block in self._lock_memory(), self._index_memory().shm:
-            block.unlink()
-            block.close()
+        self.index.close()
         atexit.unregister(self.close)
 
     def clear(self):
-        for key in self.index():
+        for key in self.update_index().keys():
             del self[key]
 
-    def _add_index_key(self, key):
-        self._acquire_index_lock()
-        self.index()
-        self._index_memory()[self._index_length] = key
-        self._release_index_lock()
-
-    def _remove_index_key(self, key):
-        self._acquire_index_lock()
-        index = self.index()
-        index_memory = self._index_memory()
-        iterator = enumerate(index)
-        ix, item = None, None
-        while item != key:
-            try:
-                ix, item = next(iterator)
-            except StopIteration:
-                raise KeyError(f"{key} not found in this Notepad's index.")
-        index_memory[ix] = index_memory[len(index) - 1]
-        index_memory[len(index) - 1] = b""
-        self._release_index_lock()
-
-    @classmethod
-    def open(
-            cls,
-            prefix=None,
-            index_length=256,
-            max_key_characters=128,
-            exists_ok=True,
-            cleanup_on_exit=True,
-            **init_kwargs,
-    ):
-        if prefix is None:
-            prefix = randint(100000, 999999)
-
-        # TODO: handle exists_ok for ShareableList
-        _index = ListIndex(f"{prefix}_index", index_length, max_key_characters)
-        notepad = Notepad(prefix, **init_kwargs)
-        if cleanup_on_exit is True:
-            # if SharedMemory objects are instantiated in __main__,
-            # multiprocessing.util._exit_function() generally does a good job
-            # of cleaning them up. however, blocks created in child processes
-            # will often not be cleanly and automatically unlinked.
-            atexit.register(notepad.close)
-        return notepad
-
-
-class GraphPaper(Notepad):
-    def __init__(self, prefix):
-        from array_codecs import memorize_array
-        super().__init__(
-            prefix,
-            encoder=numpy_encoder,
-            decoder = numpy_decoder,
-            memorizer=memorize_array,
-            recaller = remember_array
+    def __str__(self):
+        return (
+            f"{self.__class__.__name__} with keys {self.update_index().keys()}"
         )
+
+    def __repr__(self):
+        return self.__str__()
 
 
 class Sticky:
     def __init__(
-            self,
-            address=None,
-            decoder=json_pickle_decoder,
-            readonly=True,
-            value=None,
-            cleanup_on_exit=True
+        self,
+        address=None,
+        readonly=True,
+        value=None,
+        cleanup_on_exit=True
     ):
         self.address = str(address)
-        self.decoder = decoder
+        self.encode, self.decode = json_pickle_codec_factory()
         self._cached_value = value
         self.readonly = readonly
         if cleanup_on_exit is True:
@@ -372,29 +540,24 @@ class Sticky:
 
     @classmethod
     def note(
-            cls,
-            obj,
-            address=None,
-            encoder=json_pickle_encoder,
-            decoder=json_pickle_decoder,
-            exists_ok=False,
-            readonly=True,
-            cleanup_on_exit=True
+        cls,
+        obj,
+        address=None,
+        exists_ok=False,
+        readonly=True,
+        cleanup_on_exit=True
     ):
         init_kwargs = {
             'value': obj,
             'readonly': readonly,
-            'decoder': decoder,
             'address': str(address),
             'cleanup_on_exit': cleanup_on_exit
         }
         if address is None:
             init_kwargs['address'] = f"{randint(100000, 999999)}"
-        encoded = encoder(obj)
-        size = len(encoded)
-        block = create_block(init_kwargs['address'], size, exists_ok=exists_ok)
-        block.buf[:] = encoded
-        return Sticky(**init_kwargs)
+        note = Sticky(**init_kwargs)
+        note.stick(obj)
+        return note
 
     def read(self, reread=False):
         if (
@@ -407,7 +570,7 @@ class Sticky:
         except FileNotFoundError:
             return None
         stream = block.buf.tobytes()
-        self._cached_value = self.decoder(stream)
+        self._cached_value = self.decode(stream)
         return self._cached_value
 
     def close(self):
@@ -418,8 +581,8 @@ class Sticky:
     def pull(self):
         return self.close()
 
-    def stick(self, obj, encoder=json_pickle_encoder):
-        encoded = encoder(obj)
+    def stick(self, obj):
+        encoded = self.encode(obj)
         size = len(encoded)
         block = create_block(self.address, size)
         block.buf[:] = encoded
@@ -436,3 +599,17 @@ class Sticky:
             return f"sticky: {self._cached_value.__repr__()}"
         else:
             return 'unread sticky'
+
+
+"""
+possible TODOs:
+1. we could have the index stored at some other randomized address, but
+i very much like the idea of these classes being portable between processes
+by referencing only a single string
+
+2: dumb version of Notepad without an index for faster assignment. or does
+Sticky fully accomplish this?
+
+3. Version of DictIndex that has its own ListIndex for keys, and stores values
+in individual shared memory locations for faster assignment 
+"""

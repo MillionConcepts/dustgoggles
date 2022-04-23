@@ -6,16 +6,6 @@ import numpy as np
 from dustgoggles.structures import dig_and_edit
 
 
-def numpy_decoder(shape, dtype, buffer):
-    return np.ndarray(shape, dtype=dtype, buffer=buffer)
-
-
-def numpy_encoder(array, buffer):
-    shared_array = np.ndarray(array.shape, dtype=array.dtype, buffer=buffer)
-    shared_array[:] = array[:]
-    return array
-
-
 def reference_shared_memory_arrays(
     block_info, fetch=True
 ) -> tuple[dict, dict]:
@@ -34,18 +24,6 @@ def reference_shared_memory_arrays(
         chunk = {}
     return blocks, chunk
 
-
-def memorize_array(array: np.ndarray) -> dict:
-    block = SharedMemory(create=True, size=array.size * array.itemsize)
-
-    if "win" not in sys.platform:
-        block.close()
-    return {
-        "name": block.name,
-        "dtype": array.dtype,
-        "shape": array.shape,
-        "size": array.size * array.itemsize
-    }
 #
 #
 # def share_mapping(mapping, codec=share_array):

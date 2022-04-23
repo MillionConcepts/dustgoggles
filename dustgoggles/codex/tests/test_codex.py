@@ -1,38 +1,8 @@
 import random
 import time
-from multiprocessing import Pipe, Process
 
-import pytest
-
-from dustgoggles.codex.implements import Sticky
-
-
-def piped(func):
-    here, there = Pipe()
-
-    def sendback(*args, **kwargs):
-        try:
-            result = func(*args, **kwargs)
-        except Exception as ex:
-            result = ex
-        return there.send(result)
-
-    return here, sendback
-
-
-def wrap_piped(func, block=True):
-    def get_results_from_child_process(*args, **kwargs):
-        here, sendback = piped(func)
-        proc = Process(target=sendback, args=args, kwargs=kwargs)
-        proc.start()
-        if block is True:
-            proc.join()
-            result = here.recv()
-            proc.close()
-            return result
-        return proc
-
-    return get_results_from_child_process
+from dustgoggles.codex.implements import Sticky, Notepad, GridPaper
+from dustgoggles.test_utils import wrap_piped
 
 
 def square(x):
@@ -51,6 +21,13 @@ def stick_args(func):
         return func(*Sticky(sticky_title).read())
 
     return arg_stick
+
+
+def look_up_kwargs(func):
+    def kwarg_lookup(notepad_title, key):
+        return func(**Notepad(notepad_title).get(key))
+
+    return kwarg_lookup
 
 
 def stuck_where(obj):
@@ -88,3 +65,13 @@ def test_sticky_4():
     address = random.randint(100000, 2000000)
     wrap_piped(delayed_stick, block=False)(12, address, 0.1)
     assert wrap_piped(delayed_read)(address, 0.15) == 12
+
+
+def test_notepad_1():
+    address = random.randint(100000, 2000000)
+    remote_square = wrap_piped(look_up_kwargs(square))
+    notepad = Notepad(f"test_notepad_{address}", create=True)
+    notepad["cat"] = {"x": 2}
+    notepad["dog"] = {"x": 3}
+    assert remote_square(f"test_notepad_{address}", "cat") == 4
+    assert remote_square(f"test_notepad_{address}", "dog") == 9

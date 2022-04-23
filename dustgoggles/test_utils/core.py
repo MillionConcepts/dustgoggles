@@ -1,5 +1,6 @@
 import random
 import string
+from multiprocessing import Pipe, Process
 from typing import Hashable, Callable
 
 from cytoolz import get_in
@@ -61,3 +62,31 @@ def random_nested_dict(
             randval(RNG.choice(keytypes))
         ] = randval(RNG.choice(types))
     return nest.todict()
+
+
+def piped(func):
+    here, there = Pipe()
+
+    def sendback(*args, **kwargs):
+        try:
+            result = func(*args, **kwargs)
+        except Exception as ex:
+            result = ex
+        return there.send(result)
+
+    return here, sendback
+
+
+def wrap_piped(func, block=True):
+    def get_results_from_child_process(*args, **kwargs):
+        here, sendback = piped(func)
+        proc = Process(target=sendback, args=args, kwargs=kwargs)
+        proc.start()
+        if block is True:
+            proc.join()
+            result = here.recv()
+            proc.close()
+            return result
+        return proc
+
+    return get_results_from_child_process
