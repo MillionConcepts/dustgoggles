@@ -44,6 +44,12 @@ from dustgoggles.codex.memutilz import (
 
 
 class LockoutTagout:
+    """
+    shared memory synchronization primitive. checks a designated shared
+    memory "lock" space; blocks until it finds the space free, that the
+    "lock" contains this object's personal random "tag", or until an optional
+    timeout is reached.
+    """
     def __init__(self, name=None):
         if name is None:
             name = randint(100000, 999999)
@@ -191,12 +197,12 @@ class ListIndex(ShareableIndex):
     """
 
     def __init__(
-            self,
-            name=None,
-            create=False,
-            cleanup_on_exit=False,
-            length=64,
-            max_characters=64,
+        self,
+        name=None,
+        create=False,
+        cleanup_on_exit=False,
+        length=64,
+        max_characters=64,
     ):
         super().__init__(name, create, cleanup_on_exit)
         if create is False:
@@ -255,14 +261,14 @@ class ListIndex(ShareableIndex):
 
 class AbstractNotepad(ABC):
     def __init__(
-            self,
-            prefix=None,
-            create=False,
-            cleanup_on_exit=False,
-            index_type=None,
-            codec_factory: Optional[Callable] = None,
-            mnemonic_factory: Optional[Callable] = None,
-            **index_kwargs
+        self,
+        prefix=None,
+        create=False,
+        cleanup_on_exit=False,
+        index_type=None,
+        codec_factory: Optional[Callable] = None,
+        mnemonic_factory: Optional[Callable] = None,
+        **index_kwargs
     ):
         if prefix is None:
             prefix = randint(100000, 999999)
@@ -368,14 +374,14 @@ class Notepad(AbstractNotepad):
     """generic read-write cache"""
 
     def __init__(
-            self,
-            prefix=None,
-            create=False,
-            cleanup_on_exit=False,
-            index_type=ListIndex,
-            codec_factory=json_pickle_codec_factory,
-            mnemonic_factory=generic_mnemonic_factory,
-            **index_kwargs
+        self,
+        prefix=None,
+        create=False,
+        cleanup_on_exit=False,
+        index_type=ListIndex,
+        codec_factory=json_pickle_codec_factory,
+        mnemonic_factory=generic_mnemonic_factory,
+        **index_kwargs
     ):
         super().__init__(
             prefix,
