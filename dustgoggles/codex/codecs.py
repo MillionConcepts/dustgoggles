@@ -5,6 +5,7 @@ import pickle
 from typing import Any, Callable, Mapping
 
 from dustgoggles.codex.memutilz import create_block, fetch_block_bytes
+from dustgoggles.func import zero
 
 
 def json_codec_factory() -> tuple[Callable, Callable]:
@@ -96,8 +97,8 @@ def generic_mnemonic_factory():
 
     def remember(
         address: str,
-        decode: Callable[[bytes], Any],
-        fetch: bool = True
+        fetch: bool = True,
+        decode: Callable[[bytes], Any] = zero
     ) -> Any:
         """
         open the shared memory block at `address`. if `fetch` is False,
@@ -111,10 +112,17 @@ def generic_mnemonic_factory():
     return memorize, remember
 
 
-# there's no point to having swappable codecs in this mnemonic: we use the
-# array's buffer protocol.
 def numpy_mnemonic_factory() -> tuple[Callable, Callable]:
     """
+    generate a pair of save / load functions that can be used to send and
+    retrieve numpy ndarrays to and from shared memory. they can be partially
+    evaluated to work as bound methods of higher-level objects, or used
+    as standalone objects. unlike generic_mnemonic_factory, these functions
+    do not have swappable codecs; they use the array's own buffer protocol.
+
+    TODO: consider implementing inline codecs that pass the buffer /
+     memoryview rather than the binary blob in order to support compressing
+     / sparsifying / etc. arrays.
     """
     import numpy as np
 

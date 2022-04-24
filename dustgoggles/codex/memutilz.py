@@ -1,5 +1,5 @@
-import sys
 from multiprocessing.shared_memory import SharedMemory
+import sys
 
 
 def create_block(address, size, exists_ok=True):
@@ -47,7 +47,15 @@ def delete_block(address: str):
 def deactivate_shared_memory_resource_tracker():
     """
     monkeypatch resource tracker on posix systems to handle longstanding
-    excessively-enthusiastic shared-memory gc issue.
+    excessively-enthusiastic shared-memory gc issue. calling this function
+    from a process will prevent the Python resource tracker from
+    "cleaning up" any shared memory blocks in use by that process when the
+    process terminates. by default, on Mac and Linux, the tracker does this
+    _whether or not_ blocks are also in use by other processes, except in
+    cases in which all processes using the blocks descend from the same
+    parent process. this is the equivalent of not being able to open a file
+    without deleting it; sometimes it doesn't matter, sometimes it's
+    catastrophic.
 
     see: https://github.com/python/cpython/issues/82300 (also direct source
     for this code)

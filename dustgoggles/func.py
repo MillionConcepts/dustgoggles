@@ -2,7 +2,7 @@
 from functools import wraps, partial, reduce
 from itertools import accumulate, repeat
 from operator import add, contains, and_
-from typing import Callable, Iterable, Any, Sequence
+from typing import Callable, Iterable, Any, Sequence, Collection
 
 
 def pass_parameters(func, *args, **kwargs):
@@ -44,14 +44,14 @@ def triggerize(niladic_function: Callable) -> Callable:
     return trigger
 
 
-def are_in(items: Iterable, oper: Callable = and_) -> Callable:
+def are_in(items: Collection, oper: Callable = and_) -> Callable:
     """
     iterable -> function
     returns function that checks if its single argument contains all
     (or by changing oper, perhaps any) items
     """
 
-    def in_it(container: Iterable) -> bool:
+    def in_it(container: Collection) -> bool:
         inclusion = partial(contains, container)
         return reduce(oper, map(inclusion, items))
 
