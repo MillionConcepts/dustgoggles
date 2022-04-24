@@ -6,7 +6,7 @@ from typing import Any, Optional, Union
 
 from cytoolz import identity, compose
 
-from dustgoggles.func import triggerize, intersection
+from dustgoggles.func import triggerize
 from dustgoggles.structures import reindex_mapping, enumerate_as_mapping
 
 
@@ -32,14 +32,14 @@ class Composition:
     """
 
     def __init__(
-            self,
-            steps: Optional[
-                Union[Mapping[Any, Callable], Sequence[Callable]]
-            ] = None,
-            parameters: Optional[Mapping] = None,
-            sends: Optional[Mapping[Any, Callable]] = None,
-            inserts: Optional[Mapping] = None,
-            captures: Optional[Mapping] = None,
+        self,
+        steps: Optional[
+            Union[Mapping[Any, Callable], Sequence[Callable]]
+        ] = None,
+        parameters: Optional[Mapping] = None,
+        sends: Optional[Mapping[Any, Callable]] = None,
+        inserts: Optional[Mapping] = None,
+        captures: Optional[Mapping] = None,
     ):
         if steps is None:
             steps = [identity]
@@ -140,12 +140,12 @@ class Composition:
         self.steps[name] = step
 
     def add_aux(
-            self,
-            aux,
-            aux_type,
-            step_name=None,
-            replace=False,
-            capture_name=None
+        self,
+        aux,
+        aux_type,
+        step_name=None,
+        replace=False,
+        capture_name=None
     ):
         assert aux_type in ("send", "insert", "capture"), (
             f"I don't know {aux_type} as a type of auxiliary block."
