@@ -4,7 +4,7 @@ from multiprocessing.shared_memory import SharedMemory
 import pickle
 from typing import Any, Callable, Mapping
 
-from dustgoggles.codex.memutilz import create_block, fetch_block_bytes
+from dustgoggles.codex.memutilz import open_block, fetch_block_bytes
 from dustgoggles.func import zero
 
 
@@ -18,9 +18,11 @@ def json_codec_factory() -> tuple[Callable, Callable]:
     can/should be passed to this codec.
     """
     def encode(value: Any) -> bytes:
+        """return bytestring of json serialization of `value`"""
         return json.dumps(value).encode()
 
     def decode(blob: bytes) -> Any:
+        """return json deserialization of `blob`"""
         return json.loads(blob)
     return encode, decode
 
@@ -91,7 +93,7 @@ def generic_mnemonic_factory():
         """
         encoded = encode(value)
         size = len(encoded)
-        block = create_block(address, size, exists_ok)
+        block = open_block(address, size, exists_ok)
         block.buf[:] = encoded
         return address
 
@@ -129,7 +131,12 @@ def numpy_mnemonic_factory() -> tuple[Callable, Callable]:
     def memorize_array(
         array: np.ndarray, address: str, exists_ok: bool
     ) -> dict:
-        block = create_block(address, array.size * array.itemsize, exists_ok)
+        """
+        generate an array backed by a shared memory block at `address` and
+        fill it with the contents of `array`. return a dict containing
+        metadata necessary to fetch and reconstruct the array.
+        """
+        block = open_block(address, array.size * array.itemsize, exists_ok)
         shared_array = np.ndarray(
             array.shape, dtype=array.dtype, buffer=block.buf
         )

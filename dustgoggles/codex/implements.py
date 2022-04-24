@@ -39,27 +39,31 @@ from dustgoggles.codex.codecs import (
     numpy_mnemonic_factory,
 )
 from dustgoggles.codex.memutilz import (
-    create_block, fetch_block_bytes, delete_block, exists_block
+    open_block, fetch_block_bytes, delete_block, exists_block
 )
 
 
 class LockoutTagout:
     """
-    shared memory synchronization primitive. checks a designated shared
-    memory "lock" space; blocks until it finds the space free, that the
-    "lock" contains this object's personal random "tag", or until an optional
-    timeout is reached.
+    shared memory synchronization primitive.
     """
-    def __init__(self, name=None):
+
+    def __init__(self, name=None, create=True):
         if name is None:
             name = randint(100000, 999999)
         self.name = name
         self.tag = randbytes(5)
-        self.lock = create_block(
-            f"{self.name}_lock", exists_ok=True, size=5
-        )
+        self.lock = open_block(f"{self.name}_lock", 5, create)
 
     def acquire(self, timeout=0.1, increment=0.0001):
+        """
+        try to acquire a lock (which is shared by other LockoutTagout
+        objects in this and other processes with the same name). unless the
+        "lock" contains this object's personal random "tag" (meaning that the
+        lock has already been acquired by this object), block until the space
+        is free, checking every `increment` seconds, until `timeout` is
+        reached. setting `timeout` to a negative number disables timeout.
+        """
         acquired = False
         time_waiting = 0
         while acquired is False:
@@ -73,7 +77,7 @@ class LockoutTagout:
             # exact same time.
             else:
                 time_waiting += increment
-                if time_waiting > timeout:
+                if (timeout >= 0) and (time_waiting > timeout):
                     raise TimeoutError("timed out waiting for lock")
                 time.sleep(increment)
 
@@ -83,41 +87,84 @@ class LockoutTagout:
             raise ConnectionRefusedError
         self.lock.buf[:] = b"\x00\x00\x00\x00\x00"
 
+    def close(self):
+        delete_block(self.lock.name)
+
+
+
+class FakeLockoutTagout:
+    """
+    shared memory synchronization that doesn't synchronize or use shared
+    memory. can be used as a mock object for tests, or passed to
+    ShareableIndex objects to decrease their thread safety in exchange for
+    modest boosts to performance.
+    """
+
+    def acquire(self, *args, **kwargs):
+        pass
+
+    def release(self, *args, **kwargs):
+        pass
+
 
 class ShareableIndex(ABC):
+    """
+    abstract base class for indexes that exist in shared memory and can be
+    accessed from multiple processes. they are used to back various sorts of
+    notepads in this module, but can also be used independently.
+    """
 
-    def __init__(self, name=None, create=False, cleanup_on_exit=False, **_):
-        if create is False:
-            if not exists_block(name):
-                raise FileNotFoundError(
-                    f"Shared memory block {name} does not exist and "
-                    f"create=False passed. Construct this index with "
-                    f"create=True if you want to initialize a new index."
-                )
-        self.loto = LockoutTagout(name)
-        """
-
-        """
+    def __init__(
+        self,
+        name: str = None,
+        create: bool = True,
+        cleanup_on_exit: bool = False,
+        no_lockout: bool = False,
+        **_
+    ):
+        if (create is False) and not exists_block(name):
+            raise FileNotFoundError(
+                f"Shared memory block {name} does not exist and "
+                f"create=False passed. Construct this index with "
+                f"create=True if you want to initialize a new index."
+            )
+        if no_lockout is True:
+            self.loto = FakeLockoutTagout()
+        else:
+            self.loto = LockoutTagout(name)
         if cleanup_on_exit is True:
             atexit.register(self.close)
 
     @abstractmethod
-    def update(self, sync):
+    def update(self, sync: bool = True):
+        """
+        retrieve the contents of this index from shared memory. if you're
+        sure they haven't changed, sync=False only retrieves the index if
+        there are no locally-cached values, which is much faster but does not
+        guarantee thread safety.
+        """
         pass
 
     @abstractmethod
     def add(self, key, value=None):
+        """
+        add a key to the index. Some types of index support assigning a value
+        to individual keys; some do not.
+        """
         pass
 
     @abstractmethod
     def __delitem__(self, key):
+        """delete an item from the index."""
         pass
 
     @abstractmethod
     def close(self):
+        """destroy this object and everything about it."""
         pass
 
     def remove(self, key):
+        """"remove a key from this index."""
         return self.__delitem__(key)
 
 
@@ -125,11 +172,27 @@ class DictIndex(ShareableIndex):
     """
     very simple index based on dumping json into a shared memory block.
 
-    note that object keys must be strings -- integers, floats, etc.
-    will be converted to strings by json serialization / deserialization.
+    note that object keys must be strings. integers, floats, etc. used as
+    keys will be converted to strings by json serialization / deserialization.
     """
-
-    def __init__(self, name=None, create=False, cleanup_on_exit=False):
+    def __init__(
+        self,
+        name: str=None,
+        create: bool=True,
+        cleanup_on_exit: bool=False,
+        no_lockout: bool = False
+    ):
+        """
+        Args:
+            name: name / address of the shared memory backing the index.
+            create: create a new index if none exists. will _not_ overwrite an
+                existing index.
+            cleanup_on_exit: delete everything about this object on process
+                exit. see notes on cleanup_on_exit in the top-level docstring
+                for codex.implements.
+            no_lockout: don't use a lock on this index. decreases thread
+                safety for modest gains in performance.
+        """
         super().__init__(name, create, cleanup_on_exit)
         memorize, remember = generic_mnemonic_factory()
         encode, decode = json_codec_factory()
@@ -199,17 +262,33 @@ class ListIndex(ShareableIndex):
     def __init__(
         self,
         name=None,
-        create=False,
+        create=True,
         cleanup_on_exit=False,
-        length=64,
+        no_lockout=False,
+        max_length=64,
         max_characters=64,
     ):
-        super().__init__(name, create, cleanup_on_exit)
+        """
+        Args:
+            name: name / address of the shared memory backing the index.
+            create: create a new index if none exists. will _not_
+                overwrite an existing index.
+            cleanup_on_exit: delete everything about this object on
+                process  exit. see notes on cleanup_on_exit in the top-level
+                docstring for codex.implements.
+            no_lockout: don't use a lock on this index. decreases thread
+                safety for modest gains in performance.
+            max_length: maximum length of index. a shorter index is faster.
+            max_characters: maximum number of characters per index entry.
+                fewer is faster.
+        """
+        super().__init__(name, create, cleanup_on_exit, no_lockout)
         if create is False:
             self.memory = ShareableList(name)
         else:
             self.memory = ShareableList(
-                [b"\x00" * max_characters for _ in range(length)], name=name
+                [b"\x00" * max_characters for _ in range(max_length)],
+                name=name
             )
         self._cache = []
         self.length = 0
@@ -492,11 +571,17 @@ class GridPaper(AbstractNotepad):
         except KeyError:
             return default
 
-    def __setitem__(self, key, value, exists_ok: bool = True):
+    def __setitem__(
+            self, key, value, exists_ok: bool = True, keep_open: bool = False
+    ):
         if key in (["index", "index_lock"]):
             raise KeyError("'index' and 'index_lock' are reserved key names")
         try:
-            metadata = self.memorize(value, self.address(key), exists_ok)
+            metadata, block = self.memorize(
+                value, self.address(key), exists_ok, keep_open
+            )
+            if keep_open is True:
+                self._open_blocks.append(block)
         except FileExistsError:
             raise KeyError(
                 f"{key} already exists in this object's cache. pass "
@@ -560,11 +645,11 @@ class GridPaper(AbstractNotepad):
 
 class Sticky:
     def __init__(
-            self,
-            address=None,
-            # readonly=True,
-            value=None,
-            cleanup_on_exit=False
+        self,
+        address=None,
+        # readonly=True,
+        value=None,
+        cleanup_on_exit=False
     ):
         self.address = str(address)
         self.encode, self.decode = json_pickle_codec_factory()
@@ -575,11 +660,11 @@ class Sticky:
 
     @classmethod
     def note(
-            cls,
-            obj,
-            address=None,
-            # readonly=True,
-            cleanup_on_exit=False
+        cls,
+        obj,
+        address=None,
+        # readonly=True,
+        cleanup_on_exit=False
     ):
         init_kwargs = {
             'value': obj,
@@ -615,7 +700,7 @@ class Sticky:
     def stick(self, obj):
         encoded = self.encode(obj)
         size = len(encoded)
-        block = create_block(self.address, size)
+        block = open_block(self.address, size)
         block.buf[:] = encoded
         self._cached_value = obj
 

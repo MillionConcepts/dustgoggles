@@ -1,7 +1,7 @@
 import random
 import time
 
-from dustgoggles.codex.implements import Sticky, Notepad, GridPaper
+from dustgoggles.codex.implements import Notepad, Sticky
 from dustgoggles.test_utils import wrap_piped
 
 

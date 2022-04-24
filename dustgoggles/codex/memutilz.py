@@ -2,20 +2,21 @@ from multiprocessing.shared_memory import SharedMemory
 import sys
 
 
-def create_block(address, size, exists_ok=True):
+def open_block(address, size, create=True, overwrite=False):
     """
-    create and return a shared memory block with the specified size,
-    unlinking any existing block at that address if exists_ok is not False.
+    open and return a shared memory block with the specified size. if
+    `create` is True, create a new block if none exists. if `overwrite` is
+    True, also unlink/overwrite any existing block at that address.
     """
     try:
-        return SharedMemory(address, size=size, create=True)
+        return SharedMemory(address, size=size, create=create)
     except FileExistsError:
-        if exists_ok is False:
-            raise
+        if overwrite is False:
+            return SharedMemory(address, size)
         old_block = SharedMemory(address)
         old_block.unlink()
         old_block.close()
-        return SharedMemory(address, create=True, size=size)
+        return SharedMemory(address, True, size)
 
 
 def fetch_block_bytes(address: str) -> bytes:
