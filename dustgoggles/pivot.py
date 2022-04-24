@@ -1,12 +1,13 @@
 """
 preprocessing and shorthand functions for dataframes, mappings, and ndarrays.
 """
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
 
-def itemize_numpy(obj):
+def itemize_numpy(obj: Any):
     """
     convert objects of numpy dtypes to python scalars. in this context,
     primarily for json serialization.
@@ -16,9 +17,12 @@ def itemize_numpy(obj):
     return obj
 
 
-def dupe_df_block(dataframe, rows_to_repeat):
+def dupe_df_block(dataframe: pd.DataFrame, repeats: int):
+    """
+    create a new dataframe by duplicating "dataframe" "repeats" times
+    """
     return pd.DataFrame(
-        np.repeat(dataframe.values, rows_to_repeat, axis=0),
+        np.repeat(dataframe.values, repeats, axis=0),
         columns=dataframe.columns,
     )
 
