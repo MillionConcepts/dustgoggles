@@ -3,12 +3,13 @@ from collections import defaultdict
 from copy import copy
 from functools import reduce, partial
 from operator import methodcaller, add, getitem, eq
-from typing import Mapping, Collection, Any, Union, Sequence, MutableMapping, \
-    Callable, Type
+from typing import (
+    Mapping, Collection, Any, Union, Sequence, MutableMapping, Callable, Type
+)
 
 from cytoolz import merge
 
-from dustgoggles.func import naturals, constant, is_it, splat
+from dustgoggles.func import naturals, is_it, splat
 
 
 def to_records(nested: Mapping, accumulated_levels=None, level_names=None):
@@ -57,7 +58,7 @@ class NestingDict(defaultdict):
     __repr__ = dict.__repr__
 
     def todict(self):
-        """warning: this function permanently modify lower levels"""
+        """warning: this function may permanently modify lower levels"""
         # note: could be made depth-first by using methodcaller('todict')
         # rather than dict
         return dict(

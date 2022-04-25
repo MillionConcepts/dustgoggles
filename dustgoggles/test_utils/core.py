@@ -33,7 +33,7 @@ def pick_key_at_level(mapping, keys, hashables, branch_weight):
     nestkeys = [
         k for k, v in level_mapping.items() if isinstance(v, NestingDict)
     ]
-    if (len(nestkeys) == 0) or (RNG.random() < branch_weight):
+    if (len(nestkeys) == 0) or (RNG.random() > branch_weight):
         nestkey = randval(RNG.choice(hashables))
     else:
         nestkey = RNG.choice(nestkeys)
