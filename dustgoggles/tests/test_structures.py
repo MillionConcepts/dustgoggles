@@ -13,6 +13,7 @@ test_file = Path(
     Path(__file__).parent.parent, 'test_utils', 'data', 'm20_waypoints.json'
 )
 
+
 def test_to_records():
     as_nested = {
         'April': {
