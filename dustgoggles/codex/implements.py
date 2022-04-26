@@ -373,7 +373,8 @@ class AbstractNotepad(ABC):
                 "(or has been deleted) and create=False was passed. Try "
                 "constructing this object with create=True."
             )
-        atexit.register(self.close)
+        if cleanup_on_exit is True:
+            atexit.register(self.close)
 
     def get_raw(self, key):
         return fetch_block_bytes(self.address(key))
@@ -572,7 +573,7 @@ class GridPaper(AbstractNotepad):
             return default
 
     def __setitem__(
-            self, key, value, exists_ok: bool = True, keep_open: bool = False
+        self, key, value, exists_ok: bool = True, keep_open: bool = False
     ):
         if key in (["index", "index_lock"]):
             raise KeyError("'index' and 'index_lock' are reserved key names")

@@ -12,7 +12,7 @@ def open_block(address, size, create=True, overwrite=False):
         return SharedMemory(address, size=size, create=create)
     except FileExistsError:
         if overwrite is False:
-            return SharedMemory(address, size)
+            return SharedMemory(address)
         old_block = SharedMemory(address)
         old_block.unlink()
         old_block.close()

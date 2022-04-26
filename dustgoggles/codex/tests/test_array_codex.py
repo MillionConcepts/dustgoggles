@@ -14,7 +14,7 @@ def square(x):
 
 def grid_insert(func):
     def grid_lookup(gridpaper_title, key):
-        return func(GridPaper(gridpaper_title).get(key))
+        return func(GridPaper(gridpaper_title).get(key, copy=True))
 
     return grid_lookup
 

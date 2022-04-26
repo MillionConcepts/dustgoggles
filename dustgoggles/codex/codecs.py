@@ -2,7 +2,7 @@ import ast
 import json
 from multiprocessing.shared_memory import SharedMemory
 import pickle
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Optional
 
 from dustgoggles.codex.memutilz import open_block, fetch_block_bytes
 from dustgoggles.func import zero
@@ -93,7 +93,7 @@ def generic_mnemonic_factory():
         """
         encoded = encode(value)
         size = len(encoded)
-        block = open_block(address, size, exists_ok)
+        block = open_block(address, size, exists_ok, overwrite=True)
         block.buf[:] = encoded
         return address
 
@@ -129,8 +129,8 @@ def numpy_mnemonic_factory() -> tuple[Callable, Callable]:
     import numpy as np
 
     def memorize_array(
-        array: np.ndarray, address: str, exists_ok: bool
-    ) -> dict:
+        array: np.ndarray, address: str, exists_ok: bool, keep_open: bool
+    ) -> tuple[dict, Optional[SharedMemory]]:
         """
         generate an array backed by a shared memory block at `address` and
         fill it with the contents of `array`. return a dict containing
@@ -141,12 +141,15 @@ def numpy_mnemonic_factory() -> tuple[Callable, Callable]:
             array.shape, dtype=array.dtype, buffer=block.buf
         )
         shared_array[:] = array[:]
-        return {
+        metadata = {
             "name": block.name,
             "dtype": array.dtype.str,
             "shape": array.shape,
             "size": array.size * array.itemsize
         }
+        if keep_open is False:
+            return metadata, None
+        return metadata, block
 
     def remember_array(
         metadata: Mapping, fetch: bool = True, copy: bool = True
