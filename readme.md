@@ -36,8 +36,8 @@ The minimum supported version of Python is **3.9**.
 ## Feedback
 
 Feedback is welcomed and encouraged. Because `dustgoggles` is a dependency of tactical software for 
-the Mars Science Laboratory and Mars 2020 missions, it is possible that the content of your feedback is 
-covered by the MSL or M2020 Team Guidelines, In that case, please email: `mstclair@millionconcepts.com`. 
+the Mars Science Laboratory and Mars 2020 missions, it is possible that the content of your feedback might be 
+covered by the MSL or M2020 Team Guidelines. In that case, please send an email to mstclair@millionconcepts.com. 
 Otherwise, please file an Issue on this repository.
 
 ## Tests
