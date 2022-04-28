@@ -19,9 +19,9 @@ warping language, and helping programs remember what they are doing.
 
 ## Installation
 
-We recommend installing `dustgoggles` via `conda-forge`:
+We recommend installing `dustgoggles` via `conda` from `conda-forge`:
 
-`conda install dustgoggles`
+`conda install -c conda-forge dustgoggles`
 
 Dustgoggles is also on PyPi and can be installed with `pip`:
 
