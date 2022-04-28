@@ -23,7 +23,7 @@ We recommend installing `dustgoggles` via `conda` from `conda-forge`:
 
 `conda install -c conda-forge dustgoggles`
 
-Dustgoggles is also on PyPi and can be installed with `pip`:
+`dustgoggles` is also on PyPi and can be installed with `pip`:
 
 `pip install dustgoggles`
 
