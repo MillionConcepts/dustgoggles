@@ -178,6 +178,7 @@ class SlidingLock:
             except (FileNotFoundError, TypeError, AttributeError):
                 continue
 
+
 class FakeLock:
     """
     shared memory synchronization that doesn't synchronize or use shared
@@ -193,7 +194,7 @@ class FakeLock:
     def __enter__(self):
         pass
 
-    def __exit__(self):
+    def __exit__(self, *_, **__):
         pass
 
     def acquire(self, *args, **kwargs):
@@ -209,7 +210,6 @@ class ShareableIndex(ABC):
     accessed from multiple processes. they are used to back various sorts of
     notepads in this module, but can also be used independently.
     """
-
     def __init__(
         self,
         name: str = None,
@@ -349,10 +349,8 @@ class DictIndex(ShareableIndex):
         atexit.unregister(self.close)
 
 
-class ListIndex(ShareableIndex):
-    """
-    limited but fast index based on multiprocessing.shared_memory.ShareableList
-    """
+class TagIndex(ShareableIndex):
+    """fast index based around predictable link structures in shared memory"""
     def __init__(
         self,
         name=None,
@@ -360,9 +358,6 @@ class ListIndex(ShareableIndex):
         cleanup_on_exit=False,
         debug=False,
         no_lockout=False,
-        max_length=64,
-        max_characters=64,
-        allow_overflow=False,
     ):
         """
         Args:
@@ -372,11 +367,9 @@ class ListIndex(ShareableIndex):
             cleanup_on_exit: delete everything about this object on
                 process  exit. see notes on cleanup_on_exit in the top-level
                 docstring for codex.implements.
+            debug: dump debug information to a log file.
             no_lockout: don't use a lock on this index. decreases thread
                 safety for modest gains in performance.
-            max_length: maximum length of index. a shorter index is faster.
-            max_characters: maximum number of characters per index entry.
-                fewer is faster.
         """
         if name is None:
             name = str(randint(100000, 999999))
@@ -626,7 +619,7 @@ class Notepad(AbstractNotepad):
         prefix=None,
         create=False,
         cleanup_on_exit=False,
-        index_type=ListIndex,
+        index_type=TagIndex,
         codec_factory=json_pickle_codec_factory,
         mnemonic_factory=generic_mnemonic_factory,
         update_on_init=False,
