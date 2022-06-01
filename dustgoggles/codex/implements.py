@@ -23,13 +23,18 @@ to clean these objects up manually. cleanup_on_exit is a convenient way to
 do that. but bear in mind that it still won't effectively clean up in the
 event of some kinds of hard crash of the process!
 """
-
-from abc import abstractmethod, ABC
 import atexit
-from functools import partial
-from multiprocessing.shared_memory import ShareableList, SharedMemory
-from random import randint, randbytes
+import datetime as dt
+import inspect
+import os
 import time
+from abc import abstractmethod, ABC
+from collections import namedtuple
+from functools import partial
+from hashlib import md5
+from multiprocessing.shared_memory import ShareableList, SharedMemory
+from pathlib import Path
+from random import randint
 from typing import Any, Union, Optional, Callable
 
 from dustgoggles.codex.codecs import (
@@ -41,64 +46,155 @@ from dustgoggles.codex.codecs import (
 from dustgoggles.codex.memutilz import (
     open_block, fetch_block_bytes, delete_block, exists_block
 )
+from dustgoggles.func import zero
+
+####################################
+
+# debug helpers
 
 
-class LockoutTagout:
+def here():
+    return f"{dt.datetime.now().isoformat()[-9:]},{os.getpid()}"
+
+
+def log(message):
+    with open("../holding/dumplog.csv", "a+") as file:
+        file.write(message + "\n")
+
+
+def printstack(stack):
+    return ";".join(
+        [
+            f"{Path(frame.filename).name}:{frame.lineno}:{frame.function}"
+            for frame in stack
+        ]
+    )
+
+
+hasher = partial(md5, usedforsecurity=False)
+
+
+class SlidingLock:
     """
-    shared memory synchronization primitive.
+    shared memory synchronization primitive. uses shared memory 'filesystem'
+    backend as an atomic write register.
     """
-
-    def __init__(self, name=None, create=True):
-        if name is None:
-            name = randint(100000, 999999)
+    def __init__(self, name, debug=False):
         self.name = name
-        self.tag = randbytes(5)
-        self.lock = open_block(f"{self.name}_lock", 5, create)
+        self.lock = None
+        self.count = open_block(f"{self.name}_count", 5)
+        self.number = 0
+        self.floor = None
+        self.marker = None
+        self.acquired = False
+        self.spins = 0
+        self.max_spins = None
+        self.delay = 0
+        self.debug = debug
 
-    def acquire(self, timeout=0.1, increment=0.0001):
-        """
-        try to acquire a lock (which is shared by other LockoutTagout
-        objects in this and other processes with the same name). unless the
-        "lock" contains this object's personal random "tag" (meaning that the
-        lock has already been acquired by this object), block until the space
-        is free, checking every `increment` seconds, until `timeout` is
-        reached. setting `timeout` to a negative number disables timeout.
-        """
-        acquired = False
-        time_waiting = 0
-        while acquired is False:
-            tag = self.lock.buf.tobytes()
-            if tag == self.tag:
-                acquired = True
-            elif tag == b"\x00\x00\x00\x00\x00":
-                self.lock.buf[:] = self.tag
-            # the extra loop here is for a possibly-unnecessary double check
-            # that someone else didn't write their key to the lock at the
-            # exact same time.
-            else:
-                time_waiting += increment
-                if (timeout >= 0) and (time_waiting > timeout):
-                    raise TimeoutError("timed out waiting for lock")
-                time.sleep(increment)
+    def __enter__(self):
+        try:
+            self._renumber()
+            self.acquire()
+        except Exception as ex:
+            if getattr(self, "debug") is True:
+                log(f"{here()},{self.number},crashing out: {ex}")
+            self.release()
+            raise ex
 
-    def release(self, release_only_mine=True):
-        tag = self.lock.buf.tobytes()
-        if (tag != self.tag) and (release_only_mine is True):
-            raise ConnectionRefusedError
-        self.lock.buf[:] = b"\x00\x00\x00\x00\x00"
+    def __exit__(self, exc_type, exc_value, traceback):
+        if getattr(self, "debug") is True:
+            log(f"{here()},{self.number},entering cleanup")
+        self.release()
+
+    def _renumber(self):
+        self.floor = int.from_bytes(self.count.buf.tobytes(), "little")
+        self.number = self.floor + 1
+        while self.marker is None:
+            try:
+                self.marker = SharedMemory(
+                    f"{self.name}_{self.number}", size=1, create=True
+                )
+            except FileExistsError:
+                self.number += 1
+        if getattr(self, "debug") is True:
+            log(f"{here()},{self.number},taking slot {self.number}")
+
+    def _check_acquirement(self):
+        for other_number in reversed(range(self.floor, self.number)):
+            if exists_block(f"{self.name}_{other_number}_lock"):
+                if getattr(self, "debug") is True:
+                    log(f"{here()},{self.number},{other_number} has precedence")
+                # # # # #
+                self.wait()
+                return False
+        if getattr(self, "debug") is True:
+            log(f"{here()},{self.number},taking precedence")
+        return True
+
+    def acquire(self):
+        try:
+            self.lock = SharedMemory(
+                f"{self.name}_{self.number}_lock", size=1, create=True
+            )
+            if getattr(self, "debug") is True:
+                log(f"{here()},{self.number},placed lock")
+        except FileExistsError:
+            if getattr(self, "debug") is True:
+                log(f"{here()},{self.number},already have lock")
+            self.acquired = True
+        while self.acquired is False:
+            self.acquired = self._check_acquirement()
+
+    def wait(self):
+        self.spins += 1
+        if self.max_spins is not None:
+            if self.spins > self.max_spins:
+                if getattr(self, "debug") is True:
+                    log(f"{here()},{self.number},failure (waiting timeout)")
+                raise TimeoutError("timed out waiting for lock")
+        time.sleep(self.delay)
+
+    def release(self):
+        if self.acquired is True:
+            self.count.buf[:] = self.number.to_bytes(5, "little")
+            if getattr(self, "debug") is True:
+                log(f"{here()},{self.number},set floor to {self.number}")
+        for thing in ("lock", "marker"):
+            block = getattr(self, thing)
+            if block is None:
+                continue
+            block.unlink()
+            block.close()
+            setattr(self, thing, None)
+            if getattr(self, "debug") is True:
+                log(f"{here()},{self.number},released {thing}")
+        self.acquired = False
 
     def close(self):
-        delete_block(self.lock.name)
+        for obj in self.lock, self.count, self.marker:
+            try:
+                delete_block(obj.name)
+            except (FileNotFoundError, TypeError, AttributeError):
+                continue
 
-
-
-class FakeLockoutTagout:
+class FakeLock:
     """
     shared memory synchronization that doesn't synchronize or use shared
     memory. can be used as a mock object for tests, or passed to
     ShareableIndex objects to decrease their thread safety in exchange for
     modest boosts to performance.
     """
+    def __init__(self, *_, **__):
+        FakeLockTuple = namedtuple("FakeLock", ["unlink", "close"])
+        self.lock = FakeLockTuple(unlink=zero, close=zero)
+        self.debug = False
+
+    def __enter__(self):
+        pass
+
+    def __exit__(self):
+        pass
 
     def acquire(self, *args, **kwargs):
         pass
@@ -120,6 +216,7 @@ class ShareableIndex(ABC):
         create: bool = True,
         cleanup_on_exit: bool = False,
         no_lockout: bool = False,
+        debug=False,
         **_
     ):
         if (create is False) and not exists_block(name):
@@ -129,19 +226,17 @@ class ShareableIndex(ABC):
                 f"create=True if you want to initialize a new index."
             )
         if no_lockout is True:
-            self.loto = FakeLockoutTagout()
+            self.lock_class = FakeLock
         else:
-            self.loto = LockoutTagout(name)
+            self.lock_class = SlidingLock
         if cleanup_on_exit is True:
             atexit.register(self.close)
+        self.debug = debug
 
     @abstractmethod
-    def update(self, sync: bool = True):
+    def update(self):
         """
-        retrieve the contents of this index from shared memory. if you're
-        sure they haven't changed, sync=False only retrieves the index if
-        there are no locally-cached values, which is much faster but does not
-        guarantee thread safety.
+        retrieve the contents of this index from shared memory.
         """
         pass
 
@@ -177,9 +272,9 @@ class DictIndex(ShareableIndex):
     """
     def __init__(
         self,
-        name: str=None,
-        create: bool=True,
-        cleanup_on_exit: bool=False,
+        name: str = None,
+        create: bool = True,
+        cleanup_on_exit: bool = False,
         no_lockout: bool = False
     ):
         """
@@ -193,7 +288,7 @@ class DictIndex(ShareableIndex):
             no_lockout: don't use a lock on this index. decreases thread
                 safety for modest gains in performance.
         """
-        super().__init__(name, create, cleanup_on_exit)
+        super().__init__(name, create, cleanup_on_exit, no_lockout)
         memorize, remember = generic_mnemonic_factory()
         encode, decode = json_codec_factory()
         self.name = name
@@ -258,15 +353,16 @@ class ListIndex(ShareableIndex):
     """
     limited but fast index based on multiprocessing.shared_memory.ShareableList
     """
-
     def __init__(
         self,
         name=None,
         create=True,
         cleanup_on_exit=False,
+        debug=False,
         no_lockout=False,
         max_length=64,
         max_characters=64,
+        allow_overflow=False,
     ):
         """
         Args:
@@ -282,61 +378,125 @@ class ListIndex(ShareableIndex):
             max_characters: maximum number of characters per index entry.
                 fewer is faster.
         """
-        super().__init__(name, create, cleanup_on_exit, no_lockout)
+        if name is None:
+            name = str(randint(100000, 999999))
+        self.name = name
+        super().__init__(name, create, cleanup_on_exit, no_lockout, debug)
         if create is False:
-            self.memory = ShareableList(name)
+            self.memory = SharedMemory(name=name)
         else:
-            self.memory = ShareableList(
-                [b"\x00" * max_characters for _ in range(max_length)],
-                name=name
-            )
-        self._cache = []
-        self.length = 0
+            self.memory = SharedMemory(name=name, create=True, size=8)
+        self.cache = []
+        self.length = None
 
-    def update(self, sync=True):
-        if sync is True:
-            # TODO: optimize all this stuff with lookahead and lookbehind
-            #  for speed, etc.
-            self._cache = []
-            ix = 0
-            for ix, key in enumerate(self.memory):
-                if key == b"":
-                    break
-                self._cache.append(key)
-            self.length = ix
-        return tuple(self._cache)
+    def update_length(self):
+        try:
+            self.length = int.from_bytes(self.memory.buf.tobytes(), "little")
+        except ValueError as error:
+            if "not enough values" not in str(error):
+                raise error
+            return self.update_length()
 
-    def add(self, key, value=None):
-        if value is not None:
-            raise TypeError(
-                f"{type(self)} does not support assigning values to keys."
-            )
-        self.loto.acquire()
-        self.update()
-        self.memory[self.length] = key
-        self.loto.release()
+    def update(self):
+        self.cache = []
+        for ix, key in self._enumerate_keys():
+            self.cache.append(key)
+        return self.cache
 
-    def __delitem__(self, key):
-        self.loto.acquire()
-        self.update()
-        iterator = enumerate(self.memory)
-        ix, item = None, None
-        while item != key:
+    def check(self, target):
+        namehash = hasher(str(target).encode()).hexdigest()
+        if exists_block(f"{self.name}_name_{namehash}"):
+            nameblock = SharedMemory(f"{self.name}_name_{namehash}")
+            return int.from_bytes(nameblock.buf.tobytes(), "little")
+        return None
+
+    def _enumerate_keys(self):
+        self.update_length()
+        for ix in range(self.length):
             try:
-                ix, item = next(iterator)
-            except StopIteration:
-                raise KeyError(f"{key} not found in this index.")
-        self.memory[ix] = self.memory[self.length - 1]
-        self.memory[self.length - 1] = b""
-        self.length -= 1
-        self.loto.release()
+                keyblock = SharedMemory(f"{self.name}_key_{ix}")
+                key = keyblock.buf.tobytes().decode()
+            except FileNotFoundError:
+                continue
+            yield ix, key
+
+    def add(self, key, value=None, exists_ok=True):
+        with self.lock_class(self.name, self.debug):
+            found_at = self.check(key)
+            if found_at is not None:
+                if exists_ok is True:
+                    if getattr(self, "debug") is True:
+                        log(f"{here()},,{key} already in index at {found_at}")
+                    return
+                raise FileExistsError
+            self.update_length()
+            new_length_bytes = (self.length + 1).to_bytes(8, "little")
+            self.memory.buf[:] = new_length_bytes
+            keybytes = str(key).encode()
+            keyblock = open_block(
+                f"{self.name}_key_{self.length}",
+                create=True,
+                size=len(keybytes),
+                overwrite=True
+            )
+            keyblock.buf[:] = keybytes
+            namehash = hasher(str(key).encode()).hexdigest()
+            position_bytes = self.length.to_bytes(8, "little")
+            nameblock = open_block(
+                f"{self.name}_name_{namehash}", create=True, size=8
+            )
+            nameblock.buf[:] = position_bytes
+            # if value is not None:
+            if getattr(self, "debug") is True:
+                log(f"{here()},,set {self.length} to {key}")
+
+    def __delitem__(self, target):
+        with self.lock_class(self.name, self.debug):
+            found_at = self.check(target)
+            if found_at is None:
+                raise KeyError(f"{target} not found in this index.")
+            self.update_length()
+            if found_at != self.length - 1:
+                lastblock = SharedMemory(f"{self.name}_key_{self.length - 1}")
+                bytes_to_move = lastblock.buf.tobytes()
+                moved_block = open_block(
+                    f"{self.name}_key_{found_at}",
+                    size=len(bytes_to_move),
+                    overwrite=True
+                )
+                moved_block.buf[:] = bytes_to_move
+                namehash = hasher(bytes_to_move).hexdigest()
+                nameblock = SharedMemory(f"{self.name}_name_{namehash}")
+                nameblock.buf[:] = found_at.to_bytes(8, "little")
+                lastblock.unlink()
+                lastblock.close()
+                if getattr(self, "debug") is True:
+                    log(
+                        f"{here()},,overwrote block at position {found_at} "
+                        f"with block at position {self.length - 1} "
+                    )
+            else:
+                delete_block(f"{self.name}_key_{found_at}")
+                if getattr(self, "debug") is True:
+                    log(f"{here()},,deleted block at position {found_at}")
+            delhash = hasher(str(target).encode()).hexdigest()
+            delete_block(f"{self.name}_name_{delhash}")
+            new_length_bytes = (self.length -1).to_bytes(8, "little")
+            self.memory.buf[:] = new_length_bytes
+            if getattr(self, "debug") is True:
+                log(
+                    f"{here()},,deleted {target} at index slot {found_at} "
+                    f"and decremented index counter"
+                )
 
     def close(self):
-        for block in (self.loto.lock, self.memory.shm):
+        self.memory.unlink()
+        self.memory.close()
+        if exists_block(f"{self.name}_count"):
+            block = SharedMemory(f"{self.name}_count")
             block.unlink()
             block.close()
         atexit.unregister(self.close)
-
 
 class AbstractNotepad(ABC):
     def __init__(
@@ -347,8 +507,11 @@ class AbstractNotepad(ABC):
         index_type=None,
         codec_factory: Optional[Callable] = None,
         mnemonic_factory: Optional[Callable] = None,
+        update_on_init=True,
+        debug=False,
         **index_kwargs
     ):
+        self.debug = debug
         if prefix is None:
             prefix = randint(100000, 999999)
         self.prefix = prefix
@@ -364,9 +527,14 @@ class AbstractNotepad(ABC):
             raise TypeError("must specify an index type")
         try:
             self.index = index_type(
-                f"{prefix}_index", create, cleanup_on_exit, **index_kwargs
+                f"{prefix}_index",
+                create,
+                cleanup_on_exit,
+                debug,
+                **index_kwargs
             )
-            self.update_index()
+            if update_on_init is True:
+                self.update_index()
         except FileNotFoundError:
             raise FileNotFoundError(
                 "the index space for this object has not been initialized "
@@ -382,8 +550,8 @@ class AbstractNotepad(ABC):
     def address(self, key):
         return f"{self.prefix}_{key}"
 
-    def update_index(self, sync=True) -> Union[dict, tuple]:
-        return self.index.update(sync)
+    def update_index(self) -> Union[dict, tuple]:
+        return self.index.update()
 
     @abstractmethod
     def __getitem__(self, key):
@@ -461,6 +629,8 @@ class Notepad(AbstractNotepad):
         index_type=ListIndex,
         codec_factory=json_pickle_codec_factory,
         mnemonic_factory=generic_mnemonic_factory,
+        update_on_init=False,
+        debug=False,
         **index_kwargs
     ):
         super().__init__(
@@ -470,6 +640,8 @@ class Notepad(AbstractNotepad):
             index_type,
             codec_factory,
             mnemonic_factory,
+            update_on_init,
+            debug,
             **index_kwargs
         )
 
@@ -486,17 +658,16 @@ class Notepad(AbstractNotepad):
             return default
 
     def __setitem__(self, key, value, exists_ok: bool = True):
-        if key in (["index", "index_lock"]):
-            raise KeyError("'index' and 'index_lock' are reserved key names")
+        if isinstance(key, str) and key.startswith("index"):
+            raise KeyError("'index' is a reserved key prefix")
         try:
+            self.index.add(key, exists_ok=exists_ok)
             self.memorize(value, self.address(key), exists_ok)
         except FileExistsError:
             raise KeyError(
                 f"{key} already exists in this object's cache. pass "
                 f"exists_ok=True to overwrite it."
             )
-        if key not in self.update_index():
-            self.index.add(key)
 
     def set(self, key: str, value: Any, exists_ok: bool = True):
         return self.__setitem__(key, value, exists_ok)
@@ -526,7 +697,8 @@ class Notepad(AbstractNotepad):
             file.write(self.get_raw(key))
 
     def close(self, dump=False):
-        for key in self.update_index():
+        keys = self.update_index().copy()
+        for key in keys:
             if dump is True:
                 self.dump(key)
             del self[key]
@@ -648,14 +820,12 @@ class Sticky:
     def __init__(
         self,
         address=None,
-        # readonly=True,
         value=None,
         cleanup_on_exit=False
     ):
         self.address = str(address)
         self.encode, self.decode = json_pickle_codec_factory()
         self._cached_value = value
-        # self.readonly = readonly
         if cleanup_on_exit is True:
             atexit.register(self.close)
 
@@ -669,7 +839,6 @@ class Sticky:
     ):
         init_kwargs = {
             'value': obj,
-            # 'readonly': readonly,
             'address': str(address),
             'cleanup_on_exit': cleanup_on_exit
         }
@@ -716,17 +885,3 @@ class Sticky:
             return f"sticky: {self._cached_value.__repr__()}"
         else:
             return 'unread sticky'
-
-
-"""
-possible TODOs:
-1. we could have the index stored at some other randomized address, but
-i very much like the idea of these classes being portable between processes
-by referencing only a single string
-
-2: dumb version of Notepad without an index for faster assignment. or does
-Sticky fully accomplish this?
-
-3. Version of DictIndex that has its own ListIndex for keys, and stores values
-in individual shared memory locations for faster assignment 
-"""
