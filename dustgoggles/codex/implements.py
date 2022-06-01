@@ -3,25 +3,78 @@ high-level abstractions for working with Python shared memory.
 
 notes
 ----
+## indexes and locks: performance
+Like any synchronization objects, shared indices and locks introduce some
+overhead. The overhead is negligible for applications that access these
+objects somewhat infrequently, but can be significant for applications that
+access them at high rates, especially from many threads, as processes spinlock
+waiting for access to shared resources.
 
-1. on the cleanup_on_exit kwarg:
+If you are certain that your operations are intrinsically thread-safe (perhaps
+processes have some other synchronization strategy), or your application is
+tolerant of failed or corrupted writes, you can deactivate locking by passing
+no_lockout=True to AbstractNotepad or ShareableIndex constructors. (This will
+propagate from an AbstractNotepad to its index.)
+
+For even more performance improvements, you can pass index_type=FakeIndex to
+a Notepad constructor. This will, of course, completely deactivate indexing:
+you will not be able to explicitly list the keys of the TagIndex. This may be
+acceptable if you have top-down control over all processes sharing this
+Notepad address space or are otherwise able to a priori determine the possible
+set of keys.
+
+This WILL NOT work with GridPaper, which requires metadata stored in a
+MetaTagIndex in order to correctly format the numpy arrays it retrieves from
+shared memory.
+
+The use of FakeIndex also makes automated cleanup with .close() or
+cleanup_on_exit impossible, and you must either rely on the resource tracker,
+explicitly unlink any leftover shared memory blocks on exit, or accept the
+possibility of memory leaks.
+
+## cleanup_on_exit / deactivate_shared_memory_resource_tracker()
 If SharedMemory objects are instantiated in a top-level process,
 especially in the __main__ namespace, the multiprocessing.resource_tracker
 process generally does a good job of cleaning them up. However, sometimes we
 need a little more manual control for the following reasons:
-1) blocks initially created in child processes may not always be cleanly and
-automatically unlinked, particularly if the parent process is very
-long-running
-2) on Mac and Linux, multiprocessing.resource_tracker often does _too_
-enthusiastic a job of unlinking SharedMemory objects, making them unstable
-when used by processes that do not share a parent, so you might want to
-deactivate it: see deactivate_shared_memory_resource_tracker() in
-dustgoggles.codex.memutilz. If you do that, but you don't _want_ to create a
-memory leak -- which you might, if you are trying to make a persistent
-in-memory object cache, but in most cases you probably don't -- someone has
-to clean these objects up manually. cleanup_on_exit is a convenient way to
-do that. but bear in mind that it still won't effectively clean up in the
-event of some kinds of hard crash of the process!
+    1. blocks initially created in child processes may not always be cleanly
+    and automatically unlinked, particularly if:
+        a. they are killed at the OS level
+        b. they never terminate
+        c. the parent process is very long-running
+        d. they raise especially gnarly exceptions
+    2. on Mac and Linux, multiprocessing.resource_tracker often does too
+    good a job of unlinking SharedMemory objects, making them unstable
+    under the following conditions:
+        a. use by processes that do not inherit a resource tracker from the
+        same parent -- this can include both processes executed by separate
+        parents and processes executed by parents that did not themselves
+        instantiate a resource tracker for their children to inherit
+        b. maybe others
+    3. also on Mac and Linux, high-rate updates (> ~40/sec) to memory blocks
+    can confuse the resource tracker, causing it to throw spurious warnings
+    about leaked shared memory objects if everything is in fact unlinked
+    cleanly -- these are usually followed by non-spurious but pointless
+    warnings that it can't unlink those already-unlinked blocks. These
+    warnings occur at exit and so are difficult to suppress.
+For these reasons, you might simply want to deactivate the resource tracker:
+see deactivate_shared_memory_resource_tracker() in dustgoggles.codex.memutilz.
+If you do that, but you don't _want_ to create a memory leak -- which you
+might, if you are trying to make a persistent in-memory object cache, but in
+most cases you probably don't -- someone has to clean these objects up
+manually.
+
+Cleanup_on_exit is a convenient way to handle either this cleanup issue or
+listed in 1.a - 1.d, but bear in mind that it still won't effectively clean up
+in the event of some kinds of hard crash of the topmost process! You also
+probably don't want to set it inside processes that will terminate before you
+need to use shared memory objects they created again.
+
+If you _do_ experience memory leaks due to unavoidable instability in the non-
+dustgoggles portions of your code, they are fairly easy to clean up in most
+Mac / Linux Python implementations, as SharedMemory objects are simply files
+in /dev/shm and can be freely deleted at the OS level using rm or whatever. It
+is somewhat more challenging to free leaked blocks on Windows.
 """
 import atexit
 import datetime as dt
@@ -70,8 +123,32 @@ def printstack(stack):
     )
 
 
-hasher = partial(sha256, usedforsecurity=False)
+HASHER = partial(sha256, usedforsecurity=False)
 
+
+class FakeLock:
+    """
+    shared memory synchronization that doesn't synchronize or use shared
+    memory. can be used as a mock object for tests, or passed to
+    ShareableIndex objects to decrease their thread safety in exchange for
+    modest boosts to performance.
+    """
+    def __init__(self, *_, **__):
+        FakeLockTuple = namedtuple("FakeLock", ["unlink", "close"])
+        self.lock = FakeLockTuple(unlink=zero, close=zero)
+        self.debug = False
+
+    def __enter__(self):
+        pass
+
+    def __exit__(self, *_, **__):
+        pass
+
+    def acquire(self, *args, **kwargs):
+        pass
+
+    def release(self, *args, **kwargs):
+        pass
 
 class SlidingLock:
     """
@@ -179,31 +256,6 @@ class SlidingLock:
                 continue
 
 
-class FakeLock:
-    """
-    shared memory synchronization that doesn't synchronize or use shared
-    memory. can be used as a mock object for tests, or passed to
-    ShareableIndex objects to decrease their thread safety in exchange for
-    modest boosts to performance.
-    """
-    def __init__(self, *_, **__):
-        FakeLockTuple = namedtuple("FakeLock", ["unlink", "close"])
-        self.lock = FakeLockTuple(unlink=zero, close=zero)
-        self.debug = False
-
-    def __enter__(self):
-        pass
-
-    def __exit__(self, *_, **__):
-        pass
-
-    def acquire(self, *args, **kwargs):
-        pass
-
-    def release(self, *args, **kwargs):
-        pass
-
-
 class ShareableIndex(ABC):
     """
     abstract base class for indexes that exist in shared memory and can be
@@ -263,8 +315,31 @@ class ShareableIndex(ABC):
         return self.__delitem__(key)
 
 
+class FakeIndex(ShareableIndex):
+    def __init__(self, *_, **__):
+        super().__init__(no_lockout=True)
+
+    def update(self, *_, **__):
+        pass
+
+    def add(self, *_, **__):
+        pass
+
+    def __delitem__(self, *_, **__):
+        pass
+
+    def close(self, *_, **__):
+        pass
+
+    def remove(self, *_, **__):
+        pass
+
+
 class TagIndex(ShareableIndex):
-    """fast index based around predictable link structures in shared memory"""
+    """
+    fast index based around predictable link structures and reverse hash maps
+    in shared memory
+    """
     def __init__(
         self,
         name=None,
@@ -299,7 +374,7 @@ class TagIndex(ShareableIndex):
     def hash_address(self, key):
         if not isinstance(key, bytes):
             key = str(key).encode()
-        namehash = hasher(key).hexdigest()
+        namehash = HASHER(key).hexdigest()
         return f"{self.name}_name_{namehash}"
 
     def key_address(self, index_ix):
@@ -419,7 +494,12 @@ class TagIndex(ShareableIndex):
 
 
 class MetaTagIndex(TagIndex):
-    """version of TagIndex that permits attaching metadata to a key"""
+    """
+    very slightly slower and slightly more complex version of TagIndex that
+    permits attaching metadata to keys. reference usage is in GridPaper, which
+    uses a MetaTagIndex to store metadata about dtypes and dimensions of numpy
+    arrays in order to accurately and rapidly recreate them from raw bytes.
+    """
     def __init__(
         self,
         name=None,
@@ -436,6 +516,7 @@ class MetaTagIndex(TagIndex):
             cleanup_on_exit: delete everything about this object on process
                 exit. see notes on cleanup_on_exit in the top-level docstring
                 for codex.implements.
+            debug: activate debug-level logging
             no_lockout: don't use a lock on this index. decreases thread
                 safety for modest gains in performance.
         """
@@ -641,7 +722,6 @@ class AbstractNotepad(ABC):
 
 class Notepad(AbstractNotepad):
     """generic read-write cache"""
-
     def __init__(
         self,
         prefix=None,
@@ -684,6 +764,7 @@ class Notepad(AbstractNotepad):
         try:
             self.index.add(key, meta, exists_ok=exists_ok)
             self.memorize(value, self.address(key), exists_ok)
+            log(f"{here()},,set key={key} to {value}")
         except FileExistsError:
             raise KeyError(
                 f"{key} already exists in this object's cache. pass "
@@ -718,12 +799,15 @@ class Notepad(AbstractNotepad):
             file.write(self.get_raw(key))
 
     def close(self, dump=False):
-        keys = self.update_index().copy()
-        for key in keys:
-            if dump is True:
-                self.dump(key)
-            del self[key]
-        self.index.close()
+        try:
+            keys = self.update_index().copy()
+            for key in keys:
+                if dump is True:
+                    self.dump(key)
+                del self[key]
+            self.index.close()
+        except AttributeError:
+            pass
         atexit.unregister(self.close)
 
     def clear(self):
@@ -794,7 +878,6 @@ class GridPaper(AbstractNotepad):
                 f"exists_ok=True to overwrite it."
             )
         self.index.add(key, metadata)
-
 
     def _add_index_key(self, key):
         raise TypeError

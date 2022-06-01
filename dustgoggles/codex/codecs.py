@@ -1,11 +1,12 @@
 import ast
 import json
-from multiprocessing.shared_memory import SharedMemory
 import pickle
-from typing import Any, Callable, Mapping, Optional
+from multiprocessing.shared_memory import SharedMemory
+from typing import Any, Callable, Optional
 
-from dustgoggles.codex.memutilz import open_block, fetch_block_bytes, \
-    exists_block
+from dustgoggles.codex.memutilz import (
+    open_block, fetch_block_bytes, exists_block
+)
 from dustgoggles.func import zero
 
 
@@ -169,19 +170,3 @@ def numpy_mnemonic_factory() -> tuple[Callable, Callable]:
         return array, block
 
     return memorize_array, remember_array
-
-
-# TODO: deprecated at present
-# def string_index_decode(index_buffer):
-#     buf = index_buffer.buf
-#     index_list = buf.tobytes().decode().strip("\x00").split(",")
-#     if index_list == [""]:
-#         index_list = []
-#     return index_list
-#
-#
-# def string_index_write(index_buffer, new_index):
-#     encoded = ",".join(new_index).encode()
-#     buf = index_buffer.buf
-#     buf[:len(encoded)] = encoded
-#     buf[len(encoded):] = b'\x00' * (index_buffer.size - len(encoded))
