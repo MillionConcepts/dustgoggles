@@ -36,6 +36,8 @@ from pathlib import Path
 from random import randint
 from typing import Any, Union, Optional, Callable
 
+from cytoolz import juxt
+
 from dustgoggles.codex.codecs import (
     generic_mnemonic_factory,
     json_codec_factory,
@@ -98,6 +100,7 @@ class SlidingLock:
                 log(f"{here()},{self.number},crashing out: {ex}")
             self.release()
             raise ex
+        return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         if getattr(self, "debug") is True:
@@ -260,92 +263,6 @@ class ShareableIndex(ABC):
         return self.__delitem__(key)
 
 
-class DictIndex(ShareableIndex):
-    """
-    very simple index based on dumping json into a shared memory block.
-
-    note that object keys must be strings. integers, floats, etc. used as
-    keys will be converted to strings by json serialization / deserialization.
-    """
-    def __init__(
-        self,
-        name: str = None,
-        create: bool = True,
-        cleanup_on_exit: bool = False,
-        no_lockout: bool = False
-    ):
-        """
-        Args:
-            name: name / address of the shared memory backing the index.
-            create: create a new index if none exists. will _not_ overwrite an
-                existing index.
-            cleanup_on_exit: delete everything about this object on process
-                exit. see notes on cleanup_on_exit in the top-level docstring
-                for codex.implements.
-            no_lockout: don't use a lock on this index. decreases thread
-                safety for modest gains in performance.
-        """
-        super().__init__(name, create, cleanup_on_exit, no_lockout)
-        memorize, remember = generic_mnemonic_factory()
-        encode, decode = json_codec_factory()
-        self.name = name
-        self.memorize = partial(
-            memorize, address=self.name, exists_ok=True, encode=encode
-        )
-        self.remember = partial(
-            remember, address=self.name, fetch=True, decode=decode
-        )
-        self._cache = {}
-        if create is True:
-            self.memorize({})
-            self.memory = SharedMemory(self.name)
-
-    def update(self, sync=True):
-        if sync is True:
-            self._cache = self.remember()
-        return self._cache
-
-    def keys(self):
-        return self.update().keys()
-
-    def values(self):
-        return self.update().values()
-
-    def __getitem__(self, key):
-        return self.update()[key]
-
-    def get(self, key, default=None):
-        try:
-            return self[key]
-        except KeyError:
-            return default
-
-    def __setitem__(self, key, value):
-        self.loto.acquire()
-        dictionary = self.update()
-        dictionary[key] = value
-        self.memorize(dictionary)
-        self.loto.release()
-        self.memory = SharedMemory(self.name)
-
-    def add(self, key, value=None):
-        self[key] = value
-
-    def __delitem__(self, key):
-        self.loto.acquire()
-        dictionary = self.update()
-        del dictionary[key]
-        self.memorize(dictionary)
-        self.loto.release()
-        self.memory = SharedMemory(self.name)
-
-    def close(self):
-        for block in (self.loto.lock, SharedMemory(self.name)):
-            block.unlink()
-            block.close()
-        atexit.unregister(self.close)
-
-
 class TagIndex(ShareableIndex):
     """fast index based around predictable link structures in shared memory"""
     def __init__(
@@ -379,6 +296,15 @@ class TagIndex(ShareableIndex):
         self.cache = []
         self.length = None
 
+    def hash_address(self, key):
+        if not isinstance(key, bytes):
+            key = str(key).encode()
+        namehash = hasher(key).hexdigest()
+        return f"{self.name}_name_{namehash}"
+
+    def key_address(self, index_ix):
+        return f"{self.name}_key_{index_ix}"
+
     def update_length(self):
         try:
             self.length = int.from_bytes(self.memory.buf.tobytes(), "little")
@@ -393,10 +319,9 @@ class TagIndex(ShareableIndex):
             self.cache.append(key)
         return self.cache
 
-    def check(self, target):
-        namehash = hasher(str(target).encode()).hexdigest()
-        if exists_block(f"{self.name}_name_{namehash}"):
-            nameblock = SharedMemory(f"{self.name}_name_{namehash}")
+    def check(self, target) -> Optional[int]:
+        if exists_block(self.hash_address(target)):
+            nameblock = SharedMemory(self.hash_address(target))
             return int.from_bytes(nameblock.buf.tobytes(), "little")
         return None
 
@@ -404,80 +329,84 @@ class TagIndex(ShareableIndex):
         self.update_length()
         for ix in range(self.length):
             try:
-                keyblock = SharedMemory(f"{self.name}_key_{ix}")
+                keyblock = SharedMemory(self.key_address(ix))
                 key = keyblock.buf.tobytes().decode()
             except FileNotFoundError:
                 continue
             yield ix, key
 
+    def _add(self, key, exists_ok) -> Optional[int]:
+        found_at = self.check(key)
+        if found_at is not None:
+            if exists_ok is True:
+                if getattr(self, "debug") is True:
+                    log(f"{here()},,{key} already in index at {found_at}")
+                return found_at
+            raise FileExistsError
+        self.update_length()
+        new_length_bytes = (self.length + 1).to_bytes(8, "little")
+        self.memory.buf[:] = new_length_bytes
+        keybytes = str(key).encode()
+        keyblock = open_block(
+            self.key_address(self.length),
+            create=True,
+            size=len(keybytes),
+            overwrite=True
+        )
+        keyblock.buf[:] = keybytes
+        position_bytes = self.length.to_bytes(8, "little")
+        nameblock = open_block(self.hash_address(key), create=True, size=8)
+        nameblock.buf[:] = position_bytes
+        if getattr(self, "debug") is True:
+            log(f"{here()},,set {self.length} to {key}")
+        return self.length
+
     def add(self, key, value=None, exists_ok=True):
+        if value is not None:
+            raise ValueError("TagIndex does not support value-setting.")
         with self.lock_class(self.name, self.debug):
-            found_at = self.check(key)
-            if found_at is not None:
-                if exists_ok is True:
-                    if getattr(self, "debug") is True:
-                        log(f"{here()},,{key} already in index at {found_at}")
-                    return
-                raise FileExistsError
-            self.update_length()
-            new_length_bytes = (self.length + 1).to_bytes(8, "little")
-            self.memory.buf[:] = new_length_bytes
-            keybytes = str(key).encode()
-            keyblock = open_block(
-                f"{self.name}_key_{self.length}",
-                create=True,
-                size=len(keybytes),
+            return self._add(key, exists_ok)
+
+    def _delitem(self, target):
+        found_at = self.check(target)
+        if found_at is None:
+            raise KeyError(f"{target} not found in this index.")
+        self.update_length()
+        if found_at != self.length - 1:
+            lastblock = SharedMemory(self.key_address(self.length - 1))
+            lastkey = lastblock.buf.tobytes()
+            moved_block = open_block(
+                self.key_address(found_at),
+                size=len(lastkey),
                 overwrite=True
             )
-            keyblock.buf[:] = keybytes
-            namehash = hasher(str(key).encode()).hexdigest()
-            position_bytes = self.length.to_bytes(8, "little")
-            nameblock = open_block(
-                f"{self.name}_name_{namehash}", create=True, size=8
-            )
-            nameblock.buf[:] = position_bytes
-            # if value is not None:
+            moved_block.buf[:] = lastkey
+            nameblock = SharedMemory(self.hash_address(lastkey))
+            nameblock.buf[:] = found_at.to_bytes(8, "little")
+            lastblock.unlink()
+            lastblock.close()
             if getattr(self, "debug") is True:
-                log(f"{here()},,set {self.length} to {key}")
+                log(
+                    f"{here()},,overwrote block at position {found_at} "
+                    f"with block at position {self.length - 1} "
+                )
+        else:
+            delete_block(self.key_address(found_at))
+            if getattr(self, "debug") is True:
+                log(f"{here()},,deleted block at position {found_at}")
+        delete_block(self.hash_address(target))
+        new_length_bytes = (self.length - 1).to_bytes(8, "little")
+        self.memory.buf[:] = new_length_bytes
+        if getattr(self, "debug") is True:
+            log(
+                f"{here()},,deleted {target} at index slot {found_at} "
+                f"and decremented index counter"
+            )
+        return found_at
 
     def __delitem__(self, target):
         with self.lock_class(self.name, self.debug):
-            found_at = self.check(target)
-            if found_at is None:
-                raise KeyError(f"{target} not found in this index.")
-            self.update_length()
-            if found_at != self.length - 1:
-                lastblock = SharedMemory(f"{self.name}_key_{self.length - 1}")
-                bytes_to_move = lastblock.buf.tobytes()
-                moved_block = open_block(
-                    f"{self.name}_key_{found_at}",
-                    size=len(bytes_to_move),
-                    overwrite=True
-                )
-                moved_block.buf[:] = bytes_to_move
-                namehash = hasher(bytes_to_move).hexdigest()
-                nameblock = SharedMemory(f"{self.name}_name_{namehash}")
-                nameblock.buf[:] = found_at.to_bytes(8, "little")
-                lastblock.unlink()
-                lastblock.close()
-                if getattr(self, "debug") is True:
-                    log(
-                        f"{here()},,overwrote block at position {found_at} "
-                        f"with block at position {self.length - 1} "
-                    )
-            else:
-                delete_block(f"{self.name}_key_{found_at}")
-                if getattr(self, "debug") is True:
-                    log(f"{here()},,deleted block at position {found_at}")
-            delhash = hasher(str(target).encode()).hexdigest()
-            delete_block(f"{self.name}_name_{delhash}")
-            new_length_bytes = (self.length -1).to_bytes(8, "little")
-            self.memory.buf[:] = new_length_bytes
-            if getattr(self, "debug") is True:
-                log(
-                    f"{here()},,deleted {target} at index slot {found_at} "
-                    f"and decremented index counter"
-                )
+            return self._delitem(target)
 
     def close(self):
         self.memory.unlink()
@@ -487,6 +416,108 @@ class TagIndex(ShareableIndex):
             block.unlink()
             block.close()
         atexit.unregister(self.close)
+
+
+class MetaTagIndex(TagIndex):
+    """version of TagIndex that permits attaching metadata to a key"""
+    def __init__(
+        self,
+        name=None,
+        create=True,
+        cleanup_on_exit=False,
+        debug=False,
+        no_lockout=False,
+    ):
+        """
+        Args:
+            name: name / address of the shared memory backing the index.
+            create: create a new index if none exists. will _not_ overwrite an
+                existing index.
+            cleanup_on_exit: delete everything about this object on process
+                exit. see notes on cleanup_on_exit in the top-level docstring
+                for codex.implements.
+            no_lockout: don't use a lock on this index. decreases thread
+                safety for modest gains in performance.
+        """
+        super().__init__(name, create, cleanup_on_exit, debug, no_lockout)
+        memorize, remember = generic_mnemonic_factory()
+        encode, decode = json_codec_factory()
+        self.memorize = partial(memorize, exists_ok=True, encode=encode)
+        self.remember = partial(remember, fetch=True, decode=decode)
+        if create is True:
+            self.memory = SharedMemory(self.name)
+
+    def val_address(self, index_ix):
+        return f"{self.name}_val_{index_ix}"
+
+    def _load_key(self, ix):
+        keyblock = SharedMemory(self.key_address(ix))
+        return keyblock.buf.tobytes().decode()
+
+    def _load_value(self, ix):
+        try:
+            return self.remember(self.val_address(ix))
+        except FileNotFoundError:
+            return
+
+    def _enumerate(self, get_keys=False, get_values=False):
+        loaders = [
+            loader if arg is True else zero
+            for arg, loader
+            in zip((get_keys, get_values), (self._load_key, self._load_value))
+        ]
+        load = juxt(loaders)
+        self.update_length()
+        for ix in range(self.length):
+            key, val = load(ix)
+            output = [ix]
+            if get_keys is True:
+                output.append(key)
+            if get_values is True:
+                output.append(val)
+            yield tuple(output)
+
+    def keys(self):
+        return [key for _, key in self._enumerate(True)]
+
+    def values(self):
+        return [val for _, val in self._enumerate(False, True)]
+
+    def items(self):
+        return [(key, val) for _, key, val in self._enumerate(True, True)]
+
+    def add(self, key, value=None, exists_ok=True):
+        with self.lock_class(self.name, self.debug):
+            writehead = super()._add(key, exists_ok)
+            if value is not None:
+                self.memorize(value, self.val_address(writehead))
+            return writehead
+
+    def __getitem__(self, key):
+        found_at = self.check(key)
+        if found_at is None:
+            raise KeyError(f"{key} not found in index.")
+        valblock = SharedMemory(self.val_address(found_at))
+        return valblock.buf.tobytes()
+
+    def __delitem__(self, target):
+        with self.lock_class(self.name, self.debug):
+            found_at = super().__delitem__(target)
+            if (
+                (found_at == self.length - 1)
+                or not exists_block(self.val_address(self.length - 1))
+            ):
+                delete_block(self.val_address(found_at), True)
+            elif exists_block(self.val_address(self.length - 1)):
+                valblock = SharedMemory(self.val_address(self.length - 1))
+                valbytes = valblock.buf.tobytes()
+                moved_block = open_block(
+                    self.val_address(found_at), size=len(valbytes), overwrite=True
+                )
+                moved_block.buf[:] = valbytes
+                delete_block(self.val_address(self.length - 1))
+        return found_at
+
 
 class AbstractNotepad(ABC):
     def __init__(
@@ -647,11 +678,11 @@ class Notepad(AbstractNotepad):
         except KeyError:
             return default
 
-    def __setitem__(self, key, value, exists_ok: bool = True):
+    def __setitem__(self, key, value, meta=None, exists_ok: bool = True):
         if isinstance(key, str) and key.startswith("index"):
             raise KeyError("'index' is a reserved key prefix")
         try:
-            self.index.add(key, exists_ok=exists_ok)
+            self.index.add(key, meta, exists_ok=exists_ok)
             self.memorize(value, self.address(key), exists_ok)
         except FileExistsError:
             raise KeyError(
@@ -659,8 +690,8 @@ class Notepad(AbstractNotepad):
                 f"exists_ok=True to overwrite it."
             )
 
-    def set(self, key: str, value: Any, exists_ok: bool = True):
-        return self.__setitem__(key, value, exists_ok)
+    def set(self, key: str, value: Any, meta=None, exists_ok: bool = True):
+        return self.__setitem__(key, value, meta, exists_ok)
 
     def __delitem__(self, key):
         if key in (["index", "index_lock"]):
@@ -708,14 +739,26 @@ class Notepad(AbstractNotepad):
 
 class GridPaper(AbstractNotepad):
 
-    def __init__(self, prefix=None, create=False, cleanup_on_exit=False):
+    def __init__(
+        self,
+        prefix=None,
+        create=False,
+        cleanup_on_exit=False,
+        index_type=MetaTagIndex,
+        update_on_init=False,
+        debug=False,
+        **index_kwargs
+    ):
         # noinspection PyTypeChecker
         super().__init__(
             prefix,
             create,
             cleanup_on_exit,
-            index_type=DictIndex,
-            mnemonic_factory=numpy_mnemonic_factory
+            index_type,
+            mnemonic_factory=numpy_mnemonic_factory,
+            update_on_init=update_on_init,
+            debug=debug,
+            **index_kwargs
         )
         self._open_blocks = []
 
@@ -737,8 +780,8 @@ class GridPaper(AbstractNotepad):
     def __setitem__(
         self, key, value, exists_ok: bool = True, keep_open: bool = False
     ):
-        if key in (["index", "index_lock"]):
-            raise KeyError("'index' and 'index_lock' are reserved key names")
+        if isinstance(key, str) and key.startswith("index"):
+            raise KeyError("'index' is a reserved namespace.")
         try:
             metadata, block = self.memorize(
                 value, self.address(key), exists_ok, keep_open
@@ -750,8 +793,8 @@ class GridPaper(AbstractNotepad):
                 f"{key} already exists in this object's cache. pass "
                 f"exists_ok=True to overwrite it."
             )
-        if key not in self.update_index():
-            self.index[key] = metadata
+        self.index.add(key, metadata)
+
 
     def _add_index_key(self, key):
         raise TypeError
@@ -799,7 +842,7 @@ class GridPaper(AbstractNotepad):
 
     def __str__(self):
         return (
-            f"{self.__class__.__name__} with keys {self.update_index().keys()}"
+            f"{self.__class__.__name__} with keys {self.index.keys()}"
         )
 
     def __repr__(self):

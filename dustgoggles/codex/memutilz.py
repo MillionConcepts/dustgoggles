@@ -36,13 +36,22 @@ def exists_block(address: str) -> bool:
         return True
     except FileNotFoundError:
         return False
+    except ValueError as error:
+        if "cannot mmap an empty file" in str(error):
+            return True
+        raise
 
 
-def delete_block(address: str):
+
+def delete_block(address: str, missing_ok=False):
     """delete the shared memory block at address."""
-    block = SharedMemory(address)
-    block.unlink()
-    block.close()
+    try:
+        block = SharedMemory(address)
+        block.unlink()
+        block.close()
+    except FileExistsError:
+        if missing_ok is False:
+            raise
 
 
 def deactivate_shared_memory_resource_tracker():

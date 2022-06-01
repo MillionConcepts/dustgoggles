@@ -4,7 +4,8 @@ from multiprocessing.shared_memory import SharedMemory
 import pickle
 from typing import Any, Callable, Mapping, Optional
 
-from dustgoggles.codex.memutilz import open_block, fetch_block_bytes
+from dustgoggles.codex.memutilz import open_block, fetch_block_bytes, \
+    exists_block
 from dustgoggles.func import zero
 
 
@@ -91,9 +92,11 @@ def generic_mnemonic_factory():
         exists_ok is not True, will raise a FileExistsError. returns
         `address`.
         """
+        if (exists_ok is False) and exists_block(address):
+            raise FileExistsError
         encoded = encode(value)
         size = len(encoded)
-        block = open_block(address, size, exists_ok, overwrite=True)
+        block = open_block(address, size, True, True)
         block.buf[:] = encoded
         return address
 
@@ -152,8 +155,9 @@ def numpy_mnemonic_factory() -> tuple[Callable, Callable]:
         return metadata, block
 
     def remember_array(
-        metadata: Mapping, fetch: bool = True, copy: bool = True
+        metadata_json: str, fetch: bool = True, copy: bool = True
     ):
+        metadata = json.loads(metadata_json)
         block = SharedMemory(name=metadata["name"])
         if fetch is False:
             return block
