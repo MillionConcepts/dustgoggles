@@ -25,14 +25,13 @@ event of some kinds of hard crash of the process!
 """
 import atexit
 import datetime as dt
-import inspect
 import os
 import time
 from abc import abstractmethod, ABC
 from collections import namedtuple
 from functools import partial
-from hashlib import md5
-from multiprocessing.shared_memory import ShareableList, SharedMemory
+from hashlib import sha256
+from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
 from random import randint
 from typing import Any, Union, Optional, Callable
@@ -48,10 +47,8 @@ from dustgoggles.codex.memutilz import (
 )
 from dustgoggles.func import zero
 
-####################################
 
 # debug helpers
-
 
 def here():
     return f"{dt.datetime.now().isoformat()[-9:]},{os.getpid()}"
@@ -71,7 +68,7 @@ def printstack(stack):
     )
 
 
-hasher = partial(md5, usedforsecurity=False)
+hasher = partial(sha256, usedforsecurity=False)
 
 
 class SlidingLock:
