@@ -3,19 +3,23 @@
 
 ## Description
 
-`dustgoggles` is a multi-featured utility library originally designed to support other libraries in the
-*marslab* ecosystem. It contains a variety of handy tools for parsing text, manipulating data structures,
-warping language, and helping programs remember what they are doing.
-* `composition`, a flexible, antiformal domain-specific functional language framework (or,
-   equivalently, a pipeline assembly system)
-* `codex`, a set of high-level in-memory storage objects to facilitate efficient interprocess 
-   communication in idiomatic Python   
-* a family of "dig" functions (in `dustgoggles.structures`) that support easy operations on horribly nested
-   mappings (like a `dict` created from some horrible JSON returned by someone's very-helpful API)
+`dustgoggles` is a multi-featured utility library originally designed to
+support other libraries in the *marslab* ecosystem. It contains a variety of
+handy tools for parsing text, manipulating data structures, warping language,
+and helping programs remember what they are doing. Highlights include:
+* `composition`, a flexible, antiformal domain-specific functional language 
+  framework (or, equivalently, a pipeline assembly system)
+* `codex`, a set of in-memory storage objects to facilitate 
+efficient interprocess communication in idiomatic Python   
+* a family of "dig" functions (in `dustgoggles.structures`) that support 
+  easy operations on horribly nested mappings (like a `dict` created from
+  some horrible JSON returned by someone's very-helpful API)
 
-*note: `dustgoggles` is not a discrete user-facing application. if you're looking for something like a 
+*note: `dustgoggles` is not a discrete user-facing application. if you're 
+looking for something like a 
 [planetary data reader](www.github.com/millionconcepts/pdr) or an 
-[image-processing system](www.github.com/millionconcepts/marslab), you've found one of its dependencies.*
+[image-processing system](www.github.com/millionconcepts/marslab), you've 
+found one of its dependencies.*
 
 ## Installation
 

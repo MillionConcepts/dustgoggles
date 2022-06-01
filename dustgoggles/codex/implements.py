@@ -764,7 +764,8 @@ class Notepad(AbstractNotepad):
         try:
             self.index.add(key, meta, exists_ok=exists_ok)
             self.memorize(value, self.address(key), exists_ok)
-            log(f"{here()},,set key={key} to {value}")
+            if self.debug is True:
+                log(f"{here()},,set key={key} to {value}")
         except FileExistsError:
             raise KeyError(
                 f"{key} already exists in this object's cache. pass "
