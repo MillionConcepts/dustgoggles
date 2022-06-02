@@ -2,6 +2,7 @@
 *a marslab project*
 
 [![DOI](https://zenodo.org/badge/393797006.svg)](https://zenodo.org/badge/latestdoi/393797006)
+[![tests](https://github.com/MillionConcepts/dustgoggles/actions/workflows/ubuntu_tests.yml/badge.svg)](https://github.com/MillionConcepts/dustgoggles/actions/workflows/ubuntu_tests.yml)
 
 ## Description
 
