@@ -23,7 +23,7 @@ jobs:
           conda list
       - name: Run Tests
         shell: bash -l {0}
-        run: pytest --cov-config=.coveragerc --cov=marslab --cov=dustgoggles --cov-report xml:.coverage.xml
+        run: pytest --cov-config=.coveragerc --cov=dustgoggles --cov-report xml:.coverage.xml
       - name: Upload code coverage to Codecov
         uses: codecov/codecov-action@v2
         with:
