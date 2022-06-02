@@ -1,5 +1,7 @@
-# dustgoggles
+# dustgoggles 
 *a marslab project*
+
+[![DOI](https://zenodo.org/badge/393797006.svg)](https://zenodo.org/badge/latestdoi/393797006)
 
 ## Description
 
