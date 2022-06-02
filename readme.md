@@ -3,6 +3,7 @@
 
 [![DOI](https://zenodo.org/badge/393797006.svg)](https://zenodo.org/badge/latestdoi/393797006)
 [![tests](https://github.com/MillionConcepts/dustgoggles/actions/workflows/ubuntu_tests.yml/badge.svg)](https://github.com/MillionConcepts/dustgoggles/actions/workflows/ubuntu_tests.yml)
+[![codecov](https://codecov.io/gh/MillionConcepts/dustgoggles/branch/main/graph/badge.svg?token=hbA0S2NHus)](https://codecov.io/gh/MillionConcepts/dustgoggles)
 
 ## Description
 
