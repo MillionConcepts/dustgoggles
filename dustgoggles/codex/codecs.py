@@ -1,6 +1,9 @@
 import ast
 import json
-import pickle
+try:
+    import cPickle as pickle_
+except ImportError:
+    import pickle as pickle_
 from multiprocessing.shared_memory import SharedMemory
 from typing import Any, Callable, Optional
 
@@ -46,27 +49,19 @@ def ast_codec_factory():
     return encode, decode
 
 
-def json_pickle_codec_factory():
+def pickle_codec_factory():
     """
     generate a pair of encoder / decoder functions that can be inserted into
     the memorize / remember steps of a mnemonic or used on their own.
 
-    this codec attempts to serialize passed objects as JSON. failing that,
-    it will attempt to serialize them using pickle. This is a useful generic
-    codec that tends to produce behaviors that mirror default Python
-    interprocess communication.
+    this just pickles things. It is a useful generic codec that tends to
+    produce behaviors that mirror default Python interprocess communication.
     """
     def encode(value: Any) -> bytes:
-        try:
-            return json.dumps(value).encode()
-        except TypeError:
-            return pickle.dumps(value, protocol=5)
+        return pickle_.dumps(value, protocol=pickle_.HIGHEST_PROTOCOL)
 
     def decode(blob: bytes) -> Any:
-        try:
-            return json.loads(blob.decode())
-        except UnicodeDecodeError:
-            return pickle.loads(blob)
+        return pickle_.loads(blob)
 
     return encode, decode
 

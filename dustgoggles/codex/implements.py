@@ -94,7 +94,7 @@ from cytoolz import juxt
 from dustgoggles.codex.codecs import (
     generic_mnemonic_factory,
     json_codec_factory,
-    json_pickle_codec_factory,
+    pickle_codec_factory,
     numpy_mnemonic_factory,
 )
 from dustgoggles.codex.memutilz import (
@@ -728,7 +728,7 @@ class Notepad(AbstractNotepad):
         create=False,
         cleanup_on_exit=False,
         index_type=TagIndex,
-        codec_factory=json_pickle_codec_factory,
+        codec_factory=pickle_codec_factory,
         mnemonic_factory=generic_mnemonic_factory,
         update_on_init=False,
         debug=False,
@@ -941,7 +941,7 @@ class Sticky:
         cleanup_on_exit=False
     ):
         self.address = str(address)
-        self.encode, self.decode = json_pickle_codec_factory()
+        self.encode, self.decode = pickle_codec_factory()
         self._cached_value = value
         if cleanup_on_exit is True:
             atexit.register(self.close)
