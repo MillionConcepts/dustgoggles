@@ -1,9 +1,7 @@
 import ast
 import json
-try:
-    import cPickle as pickle_
-except ImportError:
-    import pickle as pickle_
+import pickle
+
 from multiprocessing.shared_memory import SharedMemory
 from typing import Any, Callable, Optional
 
@@ -58,10 +56,10 @@ def pickle_codec_factory():
     produce behaviors that mirror default Python interprocess communication.
     """
     def encode(value: Any) -> bytes:
-        return pickle_.dumps(value, protocol=pickle_.HIGHEST_PROTOCOL)
+        return pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
 
     def decode(blob: bytes) -> Any:
-        return pickle_.loads(blob)
+        return pickle.loads(blob)
 
     return encode, decode
 
