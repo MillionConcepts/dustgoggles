@@ -253,7 +253,7 @@ def dig_and_edit(
     for key, value in matches:
         mapping[key] = setter_func(key, value)
     for nest in [v for v in mapping.values() if isinstance(v, mtypes)]:
-        dig_and_edit(nest, filter_func, setter_func)
+        dig_and_edit(nest, filter_func, setter_func, mtypes)
     return mapping
 
 
