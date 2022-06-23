@@ -88,7 +88,7 @@ class Composition:
         if (rebind is True) and ("func" in dir(step)):
             step = step.func
         if (rebind is True) or (
-                not isinstance(self.parameters.get("step_name"), Mapping)
+            not isinstance(self.parameters.get("step_name"), Mapping)
         ):
             self.parameters[step_name] = kwargs
         else:
@@ -156,7 +156,7 @@ class Composition:
             )
         if step_name is None:
             step_name = next(reversed(self.steps))
-        aux_dict = getattr(self, aux_type + "s")
+        aux_dict = getattr(self, f"{aux_type}s")
         if (aux_dict.get(step_name) is None) or (replace is True):
             aux_dict[step_name] = aux
         elif replace == "compose":
@@ -173,7 +173,7 @@ class Composition:
             raise ValueError("I don't recognize that replacement type.")
 
     def add_send(
-            self, send, step_name=None, replace=False, capture_name=None
+        self, send, step_name=None, replace=False, capture_name=None
     ):
         """
         adds a send to the pipeline after step_name; sends to the named
@@ -200,11 +200,11 @@ class Composition:
         self.add_aux(insert, "insert", step_name, replace)
 
     def add_return(
-            self,
-            return_function,
-            captures,
-            return_step=None,
-            replace=False
+        self,
+        return_function,
+        captures,
+        return_step=None,
+        replace=False
     ):
         buses = list(self.steps.keys()) + list(self.captures.keys())
         if return_step is None:
@@ -247,18 +247,11 @@ class Composition:
     def function_names(self):
         return list(map(attrgetter("__name__"), self.steps.values()))
 
-    def _process_insert_parameters(
-            self, step_name, rt_insert_chain, rt_insert_kwargs
-    ):
+    def _process_insert_parameters(self, step_name):
         insert_args = ()
         insert_kwargs = {}
         if step_name in self.inserts.keys():
-            if self.inserts.get(step_name) is None:
-                insert_args = [next(rt_insert_chain)]
-            else:
-                insert_kwargs = self.inserts[step_name]
-            if step_name in rt_insert_kwargs.keys():
-                insert_kwargs |= rt_insert_kwargs[step_name]
+            insert_kwargs = self.inserts[step_name]
         return insert_args, insert_kwargs
 
     def _perform_send(self, step_name, state):
@@ -271,13 +264,11 @@ class Composition:
             return state
         return self.sends.get(step_name)(state)
 
-    def _do_step(self, state, step_name, rt_insert_chain, rt_insert_kwargs):
+    def _do_step(self, state, step_name):
         """
         perform an individual step of the pipeline
         """
-        insert_args, insert_kwargs = self._process_insert_parameters(
-            step_name, rt_insert_chain, rt_insert_kwargs
-        )
+        insert_args, insert_kwargs = self._process_insert_parameters(step_name)
         step = self.steps[step_name]
         state = step(state, *insert_args, **insert_kwargs)
         if step_name in self.captures.keys():
@@ -286,49 +277,27 @@ class Composition:
             self._perform_send(step_name, state)
         return state
 
-    def _get_ready(self, rt_insert_args, rt_insert_kwargs, special_kwargs):
-        self._bind_special_runtime_kwargs(special_kwargs)
-        if rt_insert_kwargs is None:
-            rt_insert_kwargs = {}
-        runtime_insert_chain = chain(rt_insert_args, repeat(None))
-        return runtime_insert_chain, rt_insert_kwargs
-
     # todo: modify this to produce a generator that can access internal state.
     #  this is basically a way to create returns.
     #  or actually: it's possibly better not even as a generator?
     def itercall(
-            self,
-            signal: Any = None,
-            *rt_insert_args,
-            rt_insert_kwargs: Mapping[Any] = None,
-            **special_kwargs
+        self, signal: Any = None, **special_kwargs
     ):
-        rt_insert_chain, rt_insert_kwargs = self._get_ready(
-            rt_insert_args, rt_insert_kwargs, special_kwargs
-        )
+        self._bind_special_runtime_kwargs(special_kwargs)
         state = signal
         for step_name, step in self.steps.items():
-            state = self._do_step(
-                state, step_name, rt_insert_chain, rt_insert_kwargs
-            )
+            state = self._do_step(state, step_name)
             yield state
 
     def execute(
-            self,
-            signal: Any = None,
-            *rt_insert_args,
-            rt_insert_kwargs: Mapping[Any] = None,
-            **special_kwargs
+        self,
+        signal: Any = None,
+        **special_kwargs
     ):
         """
         execute the pipeline, initializing it with signal.
         """
-        iterpipe = self.itercall(
-            signal,
-            *rt_insert_args,
-            rt_insert_kwargs=rt_insert_kwargs,
-            **special_kwargs
-        )
+        iterpipe = self.itercall(signal, **special_kwargs)
         state = None
         for state in iterpipe:
             pass
@@ -337,17 +306,17 @@ class Composition:
     def iter(self):
         raise NotImplementedError
 
-    def _bind_special_runtime_kwargs(self, runtime_insert_kwargs):
+    def _bind_special_runtime_kwargs(self, special_kwargs):
         pass
 
     def __str__(self):
         me_string = ""
         for attribute in (
-                "steps",
-                "parameters",
-                "sends",
-                "inserts",
-                "captures",
+            "steps",
+            "parameters",
+            "sends",
+            "inserts",
+            "captures",
         ):
             if not getattr(self, attribute):
                 continue
