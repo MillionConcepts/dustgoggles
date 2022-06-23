@@ -1,6 +1,7 @@
+from operator import add, mul, sub
+from pathlib import Path
 import re
 import string
-from pathlib import Path
 
 from cytoolz import frequencies, curry, get
 
@@ -59,3 +60,18 @@ def test_composition_equivalence():
     assert get(
         ['truth', 'universally', 'acknowledged'], result_0
     ) == (27, 3, 20)
+
+
+def test_composition_ordering():
+    composition = Composition((add, mul, sub))
+    composition.add_insert(0, 0, 1)
+    composition.add_insert(1, 0, 2)
+    composition.add_send(0, None, 2, 0)
+    # 3 - (2 + 1) * 2
+    assert composition.execute(2) == -3
+    # clear bus
+    composition.sends[0] = []
+    composition.inserts[2] = {}
+    composition.add_send(0, None, 2, 1)
+    # (2 + 1) * 2 - 3
+    assert composition.execute(2) == 3
