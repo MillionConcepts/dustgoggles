@@ -94,7 +94,8 @@ class Composition:
     ):
         """
         adds a send to the pipeline after step_name; sends to pointer
-        at target after processing through pipe. if no target is given,
+        at target after processing through pipe. a string or int isas an
+        insert into the step named 'target' of self. if no target is given,
         merely calls pipe and sends its output to nowhere. you are allowed
         to create sends from nonexistent step names, but they will do nothing
         unless that step name is later assigned.
@@ -128,9 +129,10 @@ class Composition:
     #  against the ABCs, which are of course unfortunately expensive -- but
     #  only trivally if this is being checked less than ~30 times per second.
     #  perhaps find some way to modify it at runtime.
-    @staticmethod
-    def place_into(thing, target, pointer):
-        if isinstance(target, list):
+    def place_into(self, thing, target, pointer):
+        if isinstance(target, (str, int)):
+            self.add_insert(target, pointer, thing)
+        elif isinstance(target, list):
             if pointer is None:
                 target.append(thing)
             else:
@@ -145,9 +147,9 @@ class Composition:
         # signal flows into the first open position, permitting partial
         # evaluation of steps with 'fixed' positional-only arguments
         opening = first(
-            filter(lambda integer: integer not in args.keys(), naturals())
+            filter(lambda integer: integer - 1 not in args.keys(), naturals())
         )
-        args[opening] = state
+        args[opening - 1] = state
         return [args[k] for k in sorted(args.keys())]
 
     def _call_partial_step(self, state, step, args, kwargs):
@@ -155,8 +157,8 @@ class Composition:
         # step itself.
         if "args" in dir(step):
             args = enumerate_as_mapping(step.args) | args
-        if "kwargs" in dir(step):
-            kwargs = step.kwargs | kwargs
+        if "keywords" in dir(step):
+            kwargs = step.keywords | kwargs
         if len(args) == 0:
             return step.func(state, **kwargs)
         return step.func(*self._flow_signal(state, args), **kwargs)
