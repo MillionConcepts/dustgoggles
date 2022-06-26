@@ -53,10 +53,6 @@ Otherwise, please file an Issue on this repository.
 Clone the repository, make sure `pytest` is installed in your environment, and run `pytest -vv` from the root 
 directory of the cloned repository. 
 
-Note that test coverage for `dustgoggles.composition` is currently provided only by downstream test suites; 
-the most easily-accessible suite is in [this repository](www.github.com/millionconcepts/marslab). Integrated 
-tests are planned.
-
 ----
 The contents of this library are provided by Million Concepts (C. Million, M. St. Clair) 
 under a BSD 3-Clause License. This license places very few restrictions on what you can 
