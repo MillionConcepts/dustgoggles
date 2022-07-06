@@ -221,3 +221,6 @@ class Composition:
 
     def __repr__(self):
         return self.__str__()
+
+    def __call__(self, *args, **kwargs):
+        return self.execute(*args, **kwargs)
