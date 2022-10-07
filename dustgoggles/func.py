@@ -91,3 +91,19 @@ def splat(func: Callable) -> Callable[[Sequence], Any]:
         return func(*args)
 
     return splatified
+
+
+def gmap(
+    func: Callable,
+    *iterables: Iterable,
+    mapper: Callable[[Callable, tuple[Iterable]], Iterable] = map,
+    evaluator: Callable[[Iterable], Any] = tuple
+):
+    """
+    'greedy map' function. map func across iterables using mapper and
+    evaluate with evaluator.
+
+    for cases in which you need a terse or configurable way to map and
+    immediately evaluate functions.
+    """
+    return evaluator(mapper(func, *iterables))
