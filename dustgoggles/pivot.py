@@ -1,10 +1,13 @@
 """
 preprocessing and shorthand functions for dataframes, mappings, and ndarrays.
 """
+from functools import reduce
+from operator import attrgetter
 from typing import Any
 
 import numpy as np
 import pandas as pd
+from dustgoggles.structures import listify
 
 
 def itemize_numpy(obj: Any):
@@ -38,13 +41,13 @@ def check_and_drop_duplicate_columns(dataframe: pd.DataFrame):
     if len(extra_columns) == 0:
         return dataframe
     for column in extra_columns:
-        test_equality = (dataframe.loc[:, column] == dataframe.loc[:, column])
+        test_equality = dataframe.loc[:, column] == dataframe.loc[:, column]
         if not test_equality.all(axis=None):
             raise ValueError
     return dataframe.loc[:, ~dataframe.columns.duplicated()]
 
 
-def extract_constants(df, to_dict=True, drop_constants=False, how='rows'):
+def extract_constants(df, to_dict=True, drop_constants=False, how="rows"):
     """
     extract 'constant' values from a dataframe -- by default, columns with
     the same value in each row; if how == 'columns', then indices with the
@@ -55,9 +58,9 @@ def extract_constants(df, to_dict=True, drop_constants=False, how='rows'):
     returns the constants (as a dict if specified) and either the
     variable-only or full original dataframe (as specified)
     """
-    if how == 'rows':
+    if how == "rows":
         axis = 0
-    elif how == 'columns':
+    elif how == "columns":
         axis = 1
     else:
         raise ValueError(f"unknown how {how}")
@@ -91,3 +94,54 @@ def pdstr(str_method_name, *str_args, **str_kwargs):
         return method(*str_args, **str_kwargs)
 
     return replacer
+
+
+def typed_columns(df, typenames):
+    """return columns of df of types that match patterns given in typenames."""
+    if isinstance(typenames, str):
+        typenames = (typenames,)
+    names = df.dtypes.apply(attrgetter("name"))
+    return df[df.dtypes.loc[names.str.medatch("|".join(typenames))].index]
+
+
+def numeric_columns(df):
+    """return 'numeric" columns of df."""
+    return typed_columns(df, ("int", "float"))
+
+
+def demote(df, dtype, typenames=("int", "float")):
+    """
+    cast columns of df matching typenames to dtype.
+    return worst-case absolute and relative errors along with demoted df.
+    """
+    candidates = typed_columns(df, typenames)
+    demoted = candidates.astype(dtype)
+    offsets = (candidates - demoted).abs()
+    a_err = offsets.abs().max()
+    r_err = (offsets / candidates).abs().max()
+    return demoted, a_err, r_err
+
+
+def check_demote(df, dtype, typenames=("int", "float"), rtol=0.001, atol=0.01):
+    demoted, a_err, r_err = demote(df, dtype, typenames)
+    a_ok = a_err.loc[a_err < atol]
+    r_ok = r_err.loc[r_err < rtol]
+    return demoted[list(set(a_ok.index).intersection(set(r_ok.index)))]
+
+
+def junction(df1, df2, columns, set_method="difference"):
+    keys1 = df1[list(columns)].value_counts().index.to_list()
+    keys2 = df2[list(columns)].value_counts().index.to_list()
+    return getattr(set(keys1), set_method)(set(keys2))
+
+
+def smash(df, by, values=None):
+    by = listify(by)
+    if values is not None:
+        df = df.loc[df[by].isin(values)]
+    df = df.melt(by)
+    names = reduce(
+        lambda x, y: x + "_" + y,
+        [v for _, v in df[by + ["variable"]].astype(str).items()],
+    )
+    return pd.Series(df["value"].to_numpy(), index=names)
