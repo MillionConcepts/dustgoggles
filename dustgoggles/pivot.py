@@ -138,7 +138,7 @@ def junction(df1, df2, columns, set_method="difference"):
 def smash(df, by, values=None):
     by = listify(by)
     if values is not None:
-        df = df.loc[df[by].isin(values)]
+        df = df.loc[df[by].isin(values).all(axis=1)]
     df = df.melt(by)
     names = reduce(
         lambda x, y: x + "_" + y,
