@@ -5,8 +5,10 @@ from functools import reduce
 from operator import attrgetter
 from typing import Any
 
+from cytoolz import valfilter
 import numpy as np
 import pandas as pd
+
 from dustgoggles.structures import listify
 
 
@@ -145,3 +147,24 @@ def smash(df, by, values=None):
         [v for _, v in df[by + ["variable"]].astype(str).items()],
     )
     return pd.Series(df["value"].to_numpy(), index=names)
+
+
+def categorizable(df, threshold=255):
+    uniques = {}
+    for c in df.columns:
+        try:
+            uniques[c] = len(df[c].unique())
+        except TypeError:
+            continue
+    categories = valfilter(lambda v: v <= threshold, uniques)
+    return list(categories.keys())
+
+
+def categorize(df, threshold=255):
+    cat_columns = categorizable(df, threshold)
+    columns = [
+        df[c] if c not in cat_columns
+        else pd.Series(pd.Categorical(df[c]), name=c)
+        for c in df.columns
+    ]
+    return pd.concat(columns, axis=1)
