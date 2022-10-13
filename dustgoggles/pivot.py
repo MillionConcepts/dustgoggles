@@ -168,3 +168,12 @@ def categorize(df, threshold=255):
         for c in df.columns
     ]
     return pd.concat(columns, axis=1)
+
+
+def unique_to_records(df, cols):
+    unique_tuples = df[cols].value_counts().index.to_list()
+    records = [
+        {col: value for col, value in zip(cols, values)}
+        for values in unique_tuples
+    ]
+    return pd.DataFrame.from_dict(records)
