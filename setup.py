@@ -10,7 +10,8 @@ setup(
     python_requires=">=3.9",
     install_requires=["cytoolz"],
     extras_require={
-        "pivot": ["numpy", "pandas"],
+        "mosaic": ["pandas", "pyarrow"],
+        "pivot": ["pandas"],
         "tests": ["pytest"],
         "array_codecs": ["numpy"]
     }
