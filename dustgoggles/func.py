@@ -107,3 +107,14 @@ def gmap(
     immediately evaluate functions.
     """
     return evaluator(mapper(func, *iterables))
+
+
+def argstop(func, arg_count=0, unpack=True):
+    @wraps(func)
+    def stopargs(*args, **kwargs):
+        if (len(args) == 1) and (unpack is True):
+            args = args[0]
+        args = args[:arg_count]
+        return func(*args, **kwargs)
+
+    return stopargs
