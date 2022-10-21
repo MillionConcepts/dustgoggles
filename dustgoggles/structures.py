@@ -268,3 +268,28 @@ def separate_by(collection, ref):
         else:
             misses.append(item)
     return hits, misses
+
+
+class HashDict:
+    def __init__(self, equivalence=hash):
+        self.dict_ = {}
+        self.reverse = {}
+        self.hasher = equivalence
+
+    def __setitem__(self, key, item):
+        itemhash = self.hasher(item)
+        self.dict_[key] = itemhash
+        if itemhash not in self.reverse.keys():
+            self.reverse[itemhash] = item
+
+    def __getitem__(self, key):
+        return self.reverse[self.dict_[key]]
+
+    def __str__(self):
+        return (
+            f"HashDict with {len(self.dict_)} keys storing "
+            f"{len(self.reverse)} unique values"
+        )
+
+    def __repr__(self):
+        return self.__str__()
