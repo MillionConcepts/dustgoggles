@@ -74,3 +74,12 @@ def meta_record_df(meta_records, extended=False):
             ]
         )
     return meta_df
+
+
+def meta_column_df(parquet_fn, extended=False):
+    metadata = meta_record_df(
+        parquet_metadata_records(parquet_fn), extended=extended
+    )
+    metadata.index = metadata['column']
+    metadata.index.name = None
+    return metadata.T
