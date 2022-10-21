@@ -4,7 +4,7 @@ from itertools import product
 import pandas as pd
 from pyarrow import parquet
 
-from pivot import extract_constants
+from dustgoggles.pivot import extract_constants
 
 
 BRIEF_PQ_META_FIELDS = (
