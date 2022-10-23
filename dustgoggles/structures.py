@@ -4,7 +4,15 @@ from copy import copy
 from functools import reduce, partial
 from operator import methodcaller, add, getitem, eq
 from typing import (
-    Mapping, Collection, Any, Union, Sequence, MutableMapping, Callable, Type
+    Mapping,
+    Collection,
+    Any,
+    Union,
+    Sequence,
+    MutableMapping,
+    Callable,
+    Type,
+    Hashable,
 )
 
 from cytoolz import merge
@@ -153,12 +161,14 @@ def constant_to_dig_predicate(putative_predicate, match="key", default=eq):
 def keyonly(func):
     def onlykey(key, _value):
         return func(key)
+
     return onlykey
 
 
 def valonly(func):
     def onlyval(_key, value):
         return func(value)
+
     return onlyval
 
 
@@ -247,7 +257,7 @@ def dig_and_edit(
     mapping: MutableMapping,
     filter_func: Callable[[Any, Any], Any],
     setter_func: Callable[[Any, Any], Any],
-    mtypes: tuple[Type[MutableMapping]] = (dict,)
+    mtypes: tuple[Type[MutableMapping]] = (dict,),
 ) -> MutableMapping:
     matches = tuple(filter(splat(filter_func), mapping.items()))
     for key, value in matches:
@@ -271,7 +281,7 @@ def separate_by(collection, ref):
 
 
 class HashDict:
-    def __init__(self, equivalence=hash):
+    def __init__(self, equivalence: Callable[[Any], Hashable] = hash):
         self.dict_ = {}
         self.reverse = {}
         self.hasher = equivalence

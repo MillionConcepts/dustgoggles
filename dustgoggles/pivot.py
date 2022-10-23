@@ -103,7 +103,7 @@ def typed_columns(df, typenames):
     if isinstance(typenames, str):
         typenames = (typenames,)
     names = df.dtypes.apply(attrgetter("name"))
-    return df[df.dtypes.loc[names.str.medatch("|".join(typenames))].index]
+    return df[df.dtypes.loc[names.str.match("|".join(typenames))].index]
 
 
 def numeric_columns(df):
@@ -163,7 +163,8 @@ def categorizable(df, threshold=255):
 def categorize(df, threshold=255):
     cat_columns = categorizable(df, threshold)
     columns = [
-        df[c] if c not in cat_columns
+        df[c]
+        if c not in cat_columns
         else pd.Series(pd.Categorical(df[c]), name=c)
         for c in df.columns
     ]
@@ -176,4 +177,5 @@ def unique_to_records(df, cols):
         {col: value for col, value in zip(cols, values)}
         for values in unique_tuples
     ]
+    # noinspection PyTypeChecker
     return pd.DataFrame.from_dict(records)
