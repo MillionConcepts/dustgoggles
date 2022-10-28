@@ -40,21 +40,25 @@ def to_records(nested: Mapping, accumulated_levels=None, level_names=None):
     return records
 
 
-def unnest(nested, mtypes=(dict,), escape=""):
+def _unnest(nested, mtypes, escape, levels):
     if not isinstance(nested, mtypes):
         return nested
-    unnested = []
-    for category, maybe_mapping in nested.items():
+    prefix = f"{escape}_{escape}".join(levels)
+    if len(prefix) > 0:
+        prefix = f"{escape}{prefix}{escape}_"
+    long_records = []
+    for level, maybe_mapping in nested.items():
         if not isinstance(maybe_mapping, mtypes):
-            unnested.append({category: maybe_mapping})
+            long_records.append({f"{prefix}{level}": maybe_mapping})
             continue
-        unnested.append(
-            {
-                f"{escape}{category}{escape}_{key}": unnest(value)
-                for key, value in maybe_mapping.items()
-            }
-        )
-    return merge(unnested)
+        long_records += _unnest(maybe_mapping, mtypes, escape,
+                                levels + [level])
+    return long_records
+
+
+def unnest(nested, mtypes=(dict,), escape=""):
+    flat_records = _unnest(nested, mtypes, escape, [])
+    return merge(flat_records)
 
 
 class NestingDict(defaultdict):
