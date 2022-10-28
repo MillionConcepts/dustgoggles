@@ -49,7 +49,9 @@ def check_and_drop_duplicate_columns(dataframe: pd.DataFrame):
     return dataframe.loc[:, ~dataframe.columns.duplicated()]
 
 
-def extract_constants(df, to_dict=True, drop_constants=False, how="rows"):
+def extract_constants(
+    df, to_dict=True, drop_constants=False, how="rows", dropna=True
+):
     """
     extract 'constant' values from a dataframe -- by default, columns with
     the same value in each row; if how == 'columns', then indices with the
@@ -66,7 +68,7 @@ def extract_constants(df, to_dict=True, drop_constants=False, how="rows"):
         axis = 1
     else:
         raise ValueError(f"unknown how {how}")
-    constant_indices = df.nunique(axis=axis) == 1
+    constant_indices = df.nunique(axis=axis, dropna=dropna) == 1
     if axis == 0:
         constants = df.loc[:, constant_indices]
         variables = df.loc[:, ~constant_indices]
