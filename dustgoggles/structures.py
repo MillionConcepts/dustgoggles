@@ -40,13 +40,18 @@ def to_records(nested: Mapping, accumulated_levels=None, level_names=None):
     return records
 
 
-def unnest(mapping_mapping):
+def unnest(nested, mtypes=(dict,), escape=""):
+    if not isinstance(nested, mtypes):
+        return nested
     unnested = []
-    for category, mapping in mapping_mapping.items():
+    for category, maybe_mapping in nested.items():
+        if not isinstance(maybe_mapping, mtypes):
+            unnested.append({category: maybe_mapping})
+            continue
         unnested.append(
             {
-                str(category) + "_" + str(key): value
-                for key, value in mapping.items()
+                f"{escape}{category}{escape}_{key}": unnest(value)
+                for key, value in maybe_mapping.items()
             }
         )
     return merge(unnested)
