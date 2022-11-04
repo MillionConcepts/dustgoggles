@@ -10,14 +10,14 @@ def pass_parameters(func, *args, **kwargs):
 
 
 def catch_interaction(
-    noninteractive: Any, func: Callable, *args, default: Any = "", **kwargs
+    noninteractive: Any, func: Callable, *args, _default: Any = "", **kwargs
 ):
     """
     if noninteractive is truthy, always return default. intended
     primarily as a wrapper to preempt attempts to prompt user input.
     """
     if noninteractive:
-        return default
+        return _default
     return func(*args, **kwargs)
 
 
