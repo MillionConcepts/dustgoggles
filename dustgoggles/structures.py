@@ -43,7 +43,7 @@ def to_records(nested: Mapping, accumulated_levels=None, level_names=None):
 def _unnest(nested, mtypes, escape, levels):
     if not isinstance(nested, mtypes):
         return nested
-    prefix = f"{escape}_{escape}".join(levels)
+    prefix = f"{escape}_{escape}".join(map(str, levels))
     if len(prefix) > 0:
         prefix = f"{escape}{prefix}{escape}_"
     long_records = []

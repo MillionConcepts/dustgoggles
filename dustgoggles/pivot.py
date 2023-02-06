@@ -68,7 +68,7 @@ def extract_constants(
         axis = 1
     else:
         raise ValueError(f"unknown how {how}")
-    constant_indices = df.nunique(axis=axis, dropna=dropna) == 1
+    constant_indices = df.nunique(axis=axis, dropna=dropna) <= 1
     if axis == 0:
         constants = df.loc[:, constant_indices]
         variables = df.loc[:, ~constant_indices]
