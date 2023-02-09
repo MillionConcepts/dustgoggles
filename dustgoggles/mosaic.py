@@ -92,7 +92,9 @@ def meta_column_df(parquet_fn, extended=False):
 
 
 # noinspection PyUnresolvedReferences
-def read_between(parquet_file, field, bounds, meta_records, verbose=True):
+def read_between(
+    parquet_file, field, bounds, meta_records, columns=None, verbose=True
+):
     """
     managed read-between bounds operation, more efficient in some cases
     than parquet.read_table with specified filters
@@ -106,6 +108,7 @@ def read_between(parquet_file, field, bounds, meta_records, verbose=True):
     if len(bound_records) == 0:
         return
     bound_groups = []
+
     for rec in bound_records:
         group = parquet_file.read_row_group(rec["row_group"])
         less_than = pac.filter(group, pac.less(group[field], bounds[1]))
