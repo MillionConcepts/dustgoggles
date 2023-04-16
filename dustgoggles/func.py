@@ -2,7 +2,7 @@
 from functools import wraps, partial, reduce
 from itertools import accumulate, repeat
 from operator import add, contains, and_
-from typing import Callable, Iterable, Any, Sequence, Collection
+from typing import Callable, Iterable, Any, Sequence, Collection, Optional
 
 
 def pass_parameters(func, *args, **kwargs):
@@ -118,3 +118,16 @@ def argstop(func, arg_count=0, unpack=True):
         return func(*args, **kwargs)
 
     return stopargs
+
+
+def optionalize(func: Callable, exc_callback: Callable = zero) -> Callable:
+    """return an optional version of `func`."""
+    @wraps(func)
+    def optionally(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            exc_callback(e)
+    return optionally
