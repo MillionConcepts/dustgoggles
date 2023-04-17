@@ -1,8 +1,8 @@
 """functional utilities and generators"""
-from functools import wraps, partial, reduce
+from functools import partial, reduce, wraps
 from itertools import accumulate, repeat
-from operator import add, contains, and_
-from typing import Callable, Iterable, Any, Sequence, Collection, Optional
+from operator import add, and_, contains
+from typing import Any, Callable, Collection, Iterable, Sequence
 
 
 def pass_parameters(func, *args, **kwargs):
@@ -100,13 +100,23 @@ def gmap(
     evaluator: Callable[[Iterable], Any] = tuple
 ):
     """
-    'greedy map' function. map func across iterables using mapper and
-    evaluate with evaluator.
-
+    'greedy map' function. map `func` across `iterables` using `mapper` and
+    evaluate with `evaluator`.
+    because we splat the variadic `iterables` argument into `mapper`, behavior
+    is roughly equivalent to `itertools.starmap` if you pass more than one
+    iterable.
     for cases in which you need a terse or configurable way to map and
     immediately evaluate functions.
     """
     return evaluator(mapper(func, *iterables))
+
+
+def filtern(func: Callable, iterable: Iterable):
+    """
+    similar to gmap(func, things, mapper=filter, evaluator=next).
+    for slightly faster or simpler cases.
+    """
+    return next(filter(func, iterable))
 
 
 def argstop(func, arg_count=0, unpack=True):
