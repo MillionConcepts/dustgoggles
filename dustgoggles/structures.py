@@ -1,7 +1,8 @@
 """structured data and manipulators thereof"""
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from copy import copy
 from functools import reduce, partial
+from itertools import chain
 from operator import methodcaller, add, getitem, eq
 from typing import (
     Mapping,
@@ -287,6 +288,26 @@ def separate_by(collection, ref):
         else:
             misses.append(item)
     return hits, misses
+
+
+def rmerge(map1, map2, mtypes=(dict, OrderedDict)):
+    """
+    recursively merge map1 and map2. result is similar to map1 | map2, but
+    also merges any mappings at lower levels. for example:
+
+    >>> rmerge({'a': 1, 'b': {'a': 1}}, {'b': {'b': 1}, 'c': 2})
+    {'a': 1, 'b': {'a': 1, 'b': 1}, 'c': 2}
+    """
+    output = {}
+    only_in_one = set(map1.keys()).symmetric_difference(map2.keys())
+    for kv in chain(map1.items(), map2.items()):
+        if kv[0] in only_in_one:
+            output[kv[0]] = kv[1]
+        elif all(map(lambda m: isinstance(m, mtypes), (map1[kv[0]], map2[kv[0]]))):
+            output[kv[0]] = rmerge(map1[kv[0]], map2[kv[0]])
+        else:
+            output[kv[0]] = map2[kv[0]]
+    return output
 
 
 class HashDict:
