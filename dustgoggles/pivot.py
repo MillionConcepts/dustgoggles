@@ -151,26 +151,19 @@ def smash(df, by, values=None):
     return pd.Series(df["value"].to_numpy(), index=names)
 
 
-def categorizable(df, threshold=255):
-    uniques = {}
-    for c in df.columns:
-        try:
-            uniques[c] = len(df[c].unique())
-        except TypeError:
-            continue
-    categories = valfilter(lambda v: v <= threshold, uniques)
-    return list(categories.keys())
+def unpack(series: pd.Series):
+    """unpack nested listlikes to columns"""
+    dropped = series.dropna()
+    df = pd.DataFrame(dropped.tolist(), index=dropped.index)
+    df.columns = [f"{dropped.name}_{i}" for i, _ in enumerate(df.columns)]
+    return df
 
 
-def categorize(df, threshold=255):
-    cat_columns = categorizable(df, threshold)
-    columns = [
-        df[c]
-        if c not in cat_columns
-        else pd.Series(pd.Categorical(df[c]), name=c)
-        for c in df.columns
-    ]
-    return pd.concat(columns, axis=1)
+def unpack_column(df: pd.DataFrame, colname):
+    """unpack a nested listlike column by name"""
+    unpacked = unpack(df[colname])
+    df.loc[unpacked.index, unpacked.columns] = unpacked
+    return df.drop(columns=colname)
 
 
 def unique_to_records(df, cols):
