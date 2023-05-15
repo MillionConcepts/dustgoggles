@@ -2,8 +2,10 @@
 preprocessing and shorthand functions for dataframes, mappings, and ndarrays.
 """
 from functools import reduce
+from itertools import product
 from operator import attrgetter
-from typing import Any
+import re
+from typing import Any, Optional
 
 from cytoolz import valfilter
 import numpy as np
@@ -104,8 +106,14 @@ def typed_columns(df, typenames):
     """return columns of df of types that match patterns given in typenames."""
     if isinstance(typenames, str):
         typenames = (typenames,)
-    names = df.dtypes.apply(attrgetter("name"))
-    return df[df.dtypes.loc[names.str.match("|".join(typenames))].index]
+    if isinstance(df.dtypes, np.dtype):
+        if re.match("|".join(typenames).lower(), df.dtypes.name.lower()):
+            return df
+        return pd.DataFrame(index=df.index)
+    names = df.dtypes.apply(attrgetter("name")).str.lower()
+    return df[
+        df.dtypes.loc[names.str.match("|".join(typenames).lower())].index
+    ]
 
 
 def numeric_columns(df):
@@ -113,24 +121,59 @@ def numeric_columns(df):
     return typed_columns(df, ("int", "float"))
 
 
-def demote(df, dtype, typenames=("int", "float")):
-    """
-    cast columns of df matching typenames to dtype.
-    return worst-case absolute and relative errors along with demoted df.
-    """
-    candidates = typed_columns(df, typenames)
-    demoted = candidates.astype(dtype)
-    offsets = (candidates - demoted).abs()
-    a_err = offsets.abs().max()
-    r_err = (offsets / candidates).abs().max()
-    return demoted, a_err, r_err
+DTYPES = (
+    "uint8", "int8", "uint16", "int16",
+    "uint32", "int32", "uint64", "int64",
+    "float32", "float64"
+)
 
 
-def check_demote(df, dtype, typenames=("int", "float"), rtol=0.001, atol=0.01):
-    demoted, a_err, r_err = demote(df, dtype, typenames)
-    a_ok = a_err.loc[a_err < atol]
-    r_ok = r_err.loc[r_err < rtol]
-    return demoted[list(set(a_ok.index).intersection(set(r_ok.index)))]
+def downcast(arr, atol=0.01, rtol=0.001):
+    # NaNs and infs don't count but should
+    # be preserved
+    nonfinite = ~np.isfinite(arr)
+    nonfinite_vals = arr[nonfinite]
+    arr[nonfinite] = 0
+    recast = None
+    for dtype in DTYPES:
+        recast = arr.astype(dtype)
+        offsets = np.abs(arr - recast)
+        if (aerr := np.nanmax(np.abs(offsets))) > atol:
+            continue
+        if (rerr := np.nanmax(np.abs(offsets / arr))) > rtol:
+            continue
+        break
+    if recast is None:
+        raise TypeError
+    # noinspection PyUnboundLocalVariable
+    return {
+        'recast': recast,
+        'nonfinite_mask': nonfinite,
+        'nonfinite_vals': nonfinite_vals,
+        'aerr': aerr,
+        'rerr': rerr
+    }
+
+
+def downcast_df(df, atol=0.01, rtol=0.001):
+    cast_series, cast_records = [], []
+    for name, col in df.items():
+        rec = downcast(col.values.T.copy(), atol, rtol) | {'name': name}
+        cast_records.append(rec)
+    while len(cast_records) > 0:
+        rec = cast_records.pop()
+        hasna = rec['nonfinite_mask'].any()
+        if hasna and ("int" in (dname := rec['recast'].dtype.name)):
+            prefix = "U" if dname.startswith("u") else ""
+            depth = (rec['recast'].dtype.itemsize * 8)
+            dtype = getattr(pd, f"{prefix}Int{depth}Dtype")()
+            series = pd.Series(rec['recast'], name=rec['name'], dtype=dtype)
+        else:
+            series = pd.Series(rec['recast'], name=rec['name'])
+        if hasna:
+            series.loc[rec['nonfinite_mask']] = rec['nonfinite_vals']
+        cast_series.append(series)
+    return pd.concat(list(reversed(cast_series)), axis=1)
 
 
 def junction(df1, df2, columns, set_method="difference"):
@@ -174,3 +217,29 @@ def unique_to_records(df, cols):
     ]
     # noinspection PyTypeChecker
     return pd.DataFrame.from_dict(records)
+
+
+def squeeze(series: pd.Series, aggfunc: Optional[str] = None) -> pd.Series:
+    """
+    removes duplicate index labels from a Series, aggregating values
+    associated with each duplicate label using `aggfunc`. if aggfunc is
+    None, `squeeze` uses "any" if the Series is boolean and simply returns
+    the first element associated with each unique index label if the Series
+    is not.
+    """
+    if aggfunc is None:
+        if series.dtype.char == "?":
+            aggfunc = "any"
+        else:
+            return series.loc[~series.index.duplicated()]
+    df = pd.DataFrame(series).reset_index()
+    ixname = "index" if series.index.name is None else series.index.name
+    sname = 0 if series.name is None else series.name
+    squeezed = df.pivot_table(
+        values=series.name,
+        index=ixname,
+        aggfunc=aggfunc,
+    )[sname]
+    squeezed.index.name = series.index.name
+    squeezed.name = series.name
+    return squeezed
