@@ -174,6 +174,7 @@ def downcast_df(df, atol=0.01, rtol=0.001):
             series.loc[rec['nonfinite_mask']] = rec['nonfinite_vals']
         cast_series.append(series)
     castdown = pd.concat(list(reversed(cast_series)), axis=1)
+    castdown.index = df.index
     # TODO: inefficient inserts
     for c in castdown:
         df[c] = castdown[c]
