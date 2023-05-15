@@ -111,9 +111,8 @@ def typed_columns(df, typenames):
             return df
         return pd.DataFrame(index=df.index)
     names = df.dtypes.apply(attrgetter("name")).str.lower()
-    return df[
-        df.dtypes.loc[names.str.match("|".join(typenames).lower())].index
-    ]
+    type_pattern = f"u?({'|'.join(typenames)})".lower()
+    return df[df.dtypes.loc[names.str.match(type_pattern)].index]
 
 
 def numeric_columns(df):
@@ -156,8 +155,9 @@ def downcast(arr, atol=0.01, rtol=0.001):
 
 
 def downcast_df(df, atol=0.01, rtol=0.001):
+    num = numeric_columns(df)
     cast_series, cast_records = [], []
-    for name, col in df.items():
+    for name, col in num.items():
         rec = downcast(col.values.T.copy(), atol, rtol) | {'name': name}
         cast_records.append(rec)
     while len(cast_records) > 0:
@@ -173,7 +173,11 @@ def downcast_df(df, atol=0.01, rtol=0.001):
         if hasna:
             series.loc[rec['nonfinite_mask']] = rec['nonfinite_vals']
         cast_series.append(series)
-    return pd.concat(list(reversed(cast_series)), axis=1)
+    castdown = pd.concat(list(reversed(cast_series)), axis=1)
+    # TODO: inefficient inserts
+    for c in castdown:
+        df[c] = castdown[c]
+    return df
 
 
 def junction(df1, df2, columns, set_method="difference"):
