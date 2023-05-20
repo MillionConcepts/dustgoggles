@@ -59,10 +59,12 @@ def define(code: CodeType, globals_: Optional[dict] = None) -> FunctionType:
 def exc_report(exc):
     if exc is None:
         return {}
+    stack = traceback.extract_stack()[:-3]
     return {
-        "time": dt.datetime.now().isoformat()[:-3],
         "exception": exc,
-        "stack": tuple([a.name for a in traceback.extract_stack()[:-3]]),
+        "lineno": tuple([a.lineno for a in stack]),
+        "stack": tuple([a.name for a in stack]),
+        "time": dt.datetime.now().isoformat()[:-3],
     }
 
 
