@@ -3,6 +3,7 @@ from collections import defaultdict, OrderedDict
 from copy import copy
 from functools import reduce, partial
 from itertools import chain
+from multiprocessing import Pool
 from operator import methodcaller, add, getitem, eq
 from typing import (
     Mapping,
@@ -333,3 +334,54 @@ class HashDict:
 
     def __repr__(self):
         return self.__str__()
+
+
+class MaybeResult:
+    def __init__(self, func, args, kwargs):
+        try:
+            self.value = func(*args, **kwargs)
+        except KeyboardInterrupt:
+            raise
+        except Exception as ex:
+            self.value = ex
+
+    def get(self):
+        if isinstance(self.value, Exception):
+            raise self.value
+        return self.value
+
+    @staticmethod
+    def ready():
+        return True
+
+
+class MaybePool:
+    def __init__(self, threads=None):
+        if threads is None:
+            self.pool = None
+        else:
+            self.pool = Pool(threads)
+
+    # TODO: map_async
+
+    def apply(self, func, args=(), kwargs=None):
+        """note: does apply_async by default"""
+        kwargs = {} if kwargs is None else kwargs
+        if self.pool is None:
+            return MaybeResult(func, args, kwargs)
+        return self.pool.apply_async(func, args, kwargs)
+
+    def close(self):
+        if self.pool is None:
+            return
+        return self.pool.close()
+
+    def join(self):
+        if self.pool is None:
+            return
+        return self.pool.join()
+
+    def terminate(self):
+        if self.pool is None:
+            return
+        return self.pool.terminate()

@@ -70,7 +70,18 @@ def extract_constants(
         axis = 1
     else:
         raise ValueError(f"unknown how {how}")
-    constant_indices = df.nunique(axis=axis, dropna=dropna) <= 1
+    try:
+        constant_indices = df.nunique(axis=axis, dropna=dropna) <= 1
+    except TypeError:
+        constant_indices = []
+        for c in df.columns:
+            if isinstance(df[c].iloc[0], list):
+                test_series = df[c].map(tuple)
+            else:
+                test_series = df[c]
+            if test_series.nunique(dropna=dropna) <= 1:
+                constant_indices.append(c)
+
     if axis == 0:
         constants = df.loc[:, constant_indices]
         variables = df.loc[:, ~constant_indices]
