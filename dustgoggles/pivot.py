@@ -83,11 +83,13 @@ def extract_constants(
                 constant_indices.append(c)
 
     if axis == 0:
+        var_indices = [c for c in df.columns if c not in constant_indices]
         constants = df.loc[:, constant_indices]
-        variables = df.loc[:, ~constant_indices]
+        variables = df.loc[:, var_indices]
     else:
+        var_indices = [c for c in df.indices if c not in constant_indices]
         constants = df.loc[constant_indices]
-        variables = df.loc[~constant_indices]
+        variables = df.loc[var_indices]
     if to_dict:
         constants = constants.iloc[0].to_dict()
     if drop_constants:

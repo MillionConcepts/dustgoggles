@@ -361,8 +361,17 @@ class MaybePool:
             self.pool = None
         else:
             self.pool = Pool(threads)
+        self.results = {}
 
-    # TODO: map_async
+    def map(self, func, argrecs):
+        for i, rec in enumerate(argrecs):
+            rec['key'] = rec.get('key', i)
+            rec['args'] = rec.get('args', ())
+            rec['kwargs'] = rec.get('kwargs', {})
+        self.results = {
+            rec['key']: self.apply(func, rec['args'], rec['kwargs'])
+            for rec in argrecs
+        }
 
     def apply(self, func, args=(), kwargs=None):
         """note: does apply_async by default"""
@@ -381,7 +390,43 @@ class MaybePool:
             return
         return self.pool.join()
 
+    def get(self, raise_exc=False):
+        output = {}
+        for k, v in self.results.items():
+            try:
+                output[k] = v.get()
+            except KeyboardInterrupt:
+                raise
+            except Exception as ex:
+                if raise_exc:
+                    raise ex
+                output[k] = ex
+        return output
+
+    def results_ready(self):
+        return {k: v.ready() for k, v in self.results.items()}
+
+    def ready(self):
+        return all(v.ready() for v in self.results.values())
+
     def terminate(self):
-        if self.pool is None:
-            return
-        return self.pool.terminate()
+        if self.pool is not None:
+            self.pool.terminate()
+        self.results = {}
+
+
+def map_into_pool(func, argrecs, threads=None, filter_exc=False):
+    pool = MaybePool(threads)
+    try:
+        pool.map(func, argrecs)
+        pool.close()
+        pool.join()
+        results = pool.get()
+        if filter_exc is True:
+            results = {
+                k: v for k, v in results.items()
+                if not isinstance(v, Exception)
+            }
+    finally:
+        pool.terminate()
+    return results
