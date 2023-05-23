@@ -5,6 +5,7 @@ from cytoolz import identity, keyfilter, first
 
 from dustgoggles.func import naturals
 from dustgoggles.structures import enumerate_as_mapping, reindex_mapping
+from dustgoggles.tracker import TrivialTracker
 
 
 class Composition:
@@ -22,22 +23,32 @@ class Composition:
         sends: Optional[Union[Mapping[Any, Sequence], Sequence]] = None,
         inserts: Optional[
             Union[Mapping[Any, Mapping], Sequence[Mapping]]
-        ] = None
+        ] = None,
+        name: Optional[str] = None,
+        tracker: Optional[TrivialTracker] = None
     ):
+        self.name = "untitled Composition" if name is None else name
+        if tracker is not None:
+            tracker.name = self.name
+        self.tracker = tracker
         if steps is None:
             steps = [identity]
         self.steps = enumerate_as_mapping(steps)
+        self.tracker = tracker
         # sends and inserts could be defaultdicts, but in this case the
         # representation is ugly and the convenience is small.
         self.sends = enumerate_as_mapping(sends)
         self.inserts = enumerate_as_mapping(inserts)
+        if self.tracker is not None:
+            for k in self.steps.keys():
+                self._add_track_send(k)
 
     def _check_for_step(self, step_name: Hashable) -> Any:
         if step_name not in self.steps.keys():
             raise KeyError(f"{step_name} is not an element of the pipeline.")
         return self.steps[step_name]
 
-    def add_step(self, step, name=None):
+    def add_step(self, step: Callable, name: Optional[Hashable] = None):
         """
         add step with name "name" -- by default, length of the pipeline + 1.
         if no step with that name currently exists, add it to the end of the
@@ -46,6 +57,15 @@ class Composition:
         if name is None:
             name = len(self.steps) + 1
         self.steps[name] = step
+        self._add_track_send(name)
+
+    def _add_track_send(self, step_name: Hashable):
+        if self.tracker is None:
+            return
+        self.add_send(
+            step_name,
+            pipe=_track_factory(self.tracker, step_name, self.steps[step_name])
+        )
 
     def reindex(self):
         self.steps = reindex_mapping(self.steps)
@@ -224,3 +244,11 @@ class Composition:
 
     def __call__(self, *args, **kwargs):
         return self.execute(*args, **kwargs)
+
+
+def _track_factory(tracker, step, func):
+
+    def track(_):
+        return tracker.track(func, step=step)
+
+    return track
