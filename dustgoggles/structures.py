@@ -18,6 +18,7 @@ from typing import (
 )
 
 from cytoolz import merge
+from more_itertools import chunked, divide
 
 from dustgoggles.func import naturals, is_it, splat
 
@@ -355,23 +356,38 @@ class MaybeResult:
         return True
 
 
+def _chunkwrap(func, argrecs):
+    return {
+        rec['key']: func(*rec['args'], **rec['kwargs'])
+        for rec in argrecs
+    }
+
+
 class MaybePool:
     def __init__(self, threads=None):
+        self.threads, self.results, self.chunked = threads, {}, False
         if threads is None:
             self.pool = None
         else:
             self.pool = Pool(threads)
-        self.results = {}
 
-    def map(self, func, argrecs):
+    def map(self, func, argrecs, as_chunks=False):
         for i, rec in enumerate(argrecs):
             rec['key'] = rec.get('key', i)
             rec['args'] = rec.get('args', ())
             rec['kwargs'] = rec.get('kwargs', {})
-        self.results = {
-            rec['key']: self.apply(func, rec['args'], rec['kwargs'])
-            for rec in argrecs
-        }
+        if (as_chunks is False) or (self.pool is None):
+            self.results = {
+                rec['key']: self.apply(func, rec['args'], rec['kwargs'])
+                for rec in argrecs
+            }
+        else:
+            self.chunked = True
+            chunks = divide(self.threads, argrecs)
+            self.results = {
+                f"chunk_{i}": self.apply(_chunkwrap, (func, chunk))
+                for i, chunk in enumerate(chunks)
+            }
 
     def apply(self, func, args=(), kwargs=None):
         """note: does apply_async by default"""
@@ -394,7 +410,10 @@ class MaybePool:
         output = {}
         for k, v in self.results.items():
             try:
-                output[k] = v.get()
+                if self.chunked is True:
+                    output |= v.get()
+                else:
+                    output[k] = v.get()
             except KeyboardInterrupt:
                 raise
             except Exception as ex:
@@ -415,10 +434,16 @@ class MaybePool:
         self.results = {}
 
 
-def map_into_pool(func, argrecs, threads=None, filter_exc=False):
+def map_into_pool(
+    func,
+    argrecs,
+    threads=None,
+    filter_exc=False,
+    as_chunks=True
+):
     pool = MaybePool(threads)
     try:
-        pool.map(func, argrecs)
+        pool.map(func, argrecs, as_chunks=as_chunks)
         pool.close()
         pool.join()
         results = pool.get()
