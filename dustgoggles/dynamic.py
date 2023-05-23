@@ -59,7 +59,7 @@ def define(code: CodeType, globals_: Optional[dict] = None) -> FunctionType:
 def exc_report(exc):
     if exc is None:
         return {}
-    stack = traceback.extract_stack()[:-3]
+    stack = traceback.extract_tb(exc.__traceback__)[:-2]
     return {
         "exception": exc,
         "lineno": tuple([a.lineno for a in stack]),
