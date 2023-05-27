@@ -2,7 +2,7 @@
 import datetime as dt
 import traceback
 from inspect import getsource, signature, Signature
-from types import FunctionType, CodeType
+from types import FunctionType, CodeType, MethodType
 from typing import Optional, Callable, MutableSequence
 
 from cytoolz import nth
@@ -28,7 +28,7 @@ def digsource(obj: Callable):
     wrapper for inspect.getsource that attempts to work on objects like
     Dynamic, functools.partial, etc.
     """
-    if isinstance(obj, FunctionType):
+    if isinstance(obj, (FunctionType, MethodType)):
         return getsource(obj)
     if "func" in dir(obj):
         # noinspection PyUnresolvedReferences
