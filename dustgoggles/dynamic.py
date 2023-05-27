@@ -161,11 +161,16 @@ class Dynamic:
         return self.__str__()
 
     @classmethod
-    def from_function(cls, func: FunctionType, *init_args, **init_kwargs):
+    def from_function(cls, func: Callable, *init_args, **init_kwargs):
         # TODO: some of this boilerplate could be reduced with a bunch of
         #  fancy getattr overrides
         dynamic = super().__new__(cls)
-        dynamic.source = digsource(func)
+        try:
+            dynamic.source = getsource(func)
+        except TypeError:  # it's some kind of weirdo callable
+            # noinspection PyUnresolvedReferences
+            func = func.__call__
+            dynamic.source = getsource(func)
         dynamic.code = func.__code__
         dynamic.func = func
         dynamic.__signature__ = signature(dynamic.func)
