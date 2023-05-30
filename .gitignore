@@ -52,3 +52,4 @@ ipython_config.py
 *scratch.py
 *scratch.ipynb
 /holding/
+*/.tracker_logs
