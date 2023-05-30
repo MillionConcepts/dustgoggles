@@ -73,23 +73,22 @@ def extract_constants(
     try:
         constant_indices = df.nunique(axis=axis, dropna=dropna) <= 1
     except TypeError:
-        constant_indices = []
+        if axis == 1:
+            raise NotImplementedError("nested fields not supported columnwise")
+        constant_indices = pd.Series(False, df.columns)
         for c in df.columns:
             if isinstance(df[c].iloc[0], list):
                 test_series = df[c].map(tuple)
             else:
                 test_series = df[c]
             if test_series.nunique(dropna=dropna) <= 1:
-                constant_indices.append(c)
-
+                constant_indices.loc[c] = True
     if axis == 0:
-        var_indices = [c for c in df.columns if c not in constant_indices]
         constants = df.loc[:, constant_indices]
-        variables = df.loc[:, var_indices]
+        variables = df.loc[:, ~constant_indices]
     else:
-        var_indices = [c for c in df.indices if c not in constant_indices]
         constants = df.loc[constant_indices]
-        variables = df.loc[var_indices]
+        variables = df.loc[~constant_indices]
     if to_dict:
         constants = constants.iloc[0].to_dict()
     if drop_constants:
