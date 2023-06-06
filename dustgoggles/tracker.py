@@ -18,6 +18,7 @@ class TrivialTracker:
     def set_metadata(self, **metadata):
         pass
 
+    log = None
     history = None
 
 
@@ -27,6 +28,11 @@ class Tracker(TrivialTracker):
     def __init__(self, name=None, identifier="", outdir=None):
         self.history, self.metadata, self.counter = [], {}, count(1)
         self.name = name
+        self.log = {
+            "name": self.name,
+            "init_timestamp": dt.datetime.now().isoformat(),
+            "history": self.history,
+        }
         if outdir is None:
             outdir = Path(__file__).parent.parent / ".tracker_logs"
         if identifier != "":
@@ -46,13 +52,16 @@ class Tracker(TrivialTracker):
             target = str(func)
         caller = currentframe().f_back
         info = getframeinfo(caller)
-        rec = {
-            'target': target,
-            'caller': info.function,
-            'lineno': info.lineno,
-            'trackcount': next(self.counter),
-            'trackname': self.name
-        } | self.metadata | metadata
+        rec = (
+            {
+                "target": target,
+                "caller": info.function,
+                "lineno": info.lineno,
+                "trackcount": next(self.counter),
+            }
+            | self.metadata
+            | metadata
+        )
         self.history.append(rec)
 
     def set_metadata(self, **metadata):
@@ -67,10 +76,12 @@ class Tracker(TrivialTracker):
     def dump(self):
         if self.paused is True:
             return
-        log = {'time': dt.datetime.now().isoformat(), 'history': self.history}
         # TODO: do this more cleverly with incremental writes etc.
+        self.log["write_timestamp"] = dt.datetime.now().isoformat()
+        key_order = sorted(self.log.keys(), key=lambda n: "history" in n)
+        self.log = {k: self.log[k] for k in key_order}
         with self.outpath.open("a") as stream:
-            json.dump(log, stream)
+            json.dump(self.log, stream, indent=2)
 
     _paused = False
     paused = property(_get_paused, _set_paused)
