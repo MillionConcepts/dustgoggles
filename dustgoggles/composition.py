@@ -1,6 +1,7 @@
 from itertools import count
 from operator import attrgetter
-from typing import Optional, Union, Mapping, Any, Callable, Sequence, Hashable
+from typing import Optional, Union, Mapping, Any, Callable, Sequence, Hashable, \
+    MutableSequence
 
 from cytoolz import identity, keyfilter, first
 
@@ -30,6 +31,7 @@ class Composition:
         tracker: Optional[TrivialTracker] = None,
         optional = False
     ):
+        self.captures = None
         self.name = "untitled Composition" if name is None else name
         if tracker is not None:
             tracker.name = self.name
@@ -120,15 +122,19 @@ class Composition:
 
     def add_captures(self):
         """add captures to all steps."""
-        for step in self.steps:
-            self.add_capture(step)
+        self.captures = {step: [None] for step in self.steps}
+        for k, v in self.captures.items():
+            self.add_capture(k, v)
 
-    def add_capture(self, step_name: Hashable):
+    def add_capture(
+        self, step_name: Hashable, target: Optional[MutableSequence]
+    ):
         """
         creates a send to a simple capture object that stores the last output
         of that pipeline step.
         """
-        self.add_send(step_name, target=[None], pointer=0)
+        target = [None] if target is None else target
+        self.add_send(step_name, target=target, pointer=0)
 
     def add_send(
         self,
