@@ -1,11 +1,13 @@
+from itertools import count
 from operator import attrgetter
 from typing import Optional, Union, Mapping, Any, Callable, Sequence, Hashable
 
 from cytoolz import identity, keyfilter, first
 
+from dustgoggles.dynamic import exc_report
 from dustgoggles.func import naturals
 from dustgoggles.structures import enumerate_as_mapping, reindex_mapping
-from dustgoggles.tracker import TrivialTracker
+from dustgoggles.tracker import TrivialTracker, Tracker
 
 
 class Composition:
@@ -25,7 +27,8 @@ class Composition:
             Union[Mapping[Any, Mapping], Sequence[Mapping]]
         ] = None,
         name: Optional[str] = None,
-        tracker: Optional[TrivialTracker] = None
+        tracker: Optional[TrivialTracker] = None,
+        optional = False
     ):
         self.name = "untitled Composition" if name is None else name
         if tracker is not None:
@@ -39,9 +42,15 @@ class Composition:
         # representation is ugly and the convenience is small.
         self.sends = enumerate_as_mapping(sends)
         self.inserts = enumerate_as_mapping(inserts)
+        self.optional = optional
         if self.tracker is not None:
-            for k in self.steps.keys():
-                self._add_track_send(k)
+            self._add_track_sends()
+
+    def track(self):
+        if self.tracker is not None:
+            return
+        self.tracker = Tracker()
+        self._add_track_sends()
 
     def _check_for_step(self, step_name: Hashable) -> Any:
         if step_name not in self.steps.keys():
@@ -58,6 +67,10 @@ class Composition:
             name = len(self.steps) + 1
         self.steps[name] = step
         self._add_track_send(name)
+
+    def _add_track_sends(self):
+        for k in self.steps.keys():
+            self._add_track_send(k)
 
     def _add_track_send(self, step_name: Hashable):
         if self.tracker is None:
@@ -105,6 +118,18 @@ class Composition:
             else:
                 self.place_into(pipe(state), target, index)
 
+    def add_captures(self):
+        """add captures to all steps."""
+        for step in self.steps:
+            self.add_capture(step)
+
+    def add_capture(self, step_name: Hashable):
+        """
+        creates a send to a simple capture object that stores the last output
+        of that pipeline step.
+        """
+        self.add_send(step_name, target=[None], pointer=0)
+
     def add_send(
         self,
         step_name: Hashable,
@@ -114,7 +139,7 @@ class Composition:
     ):
         """
         adds a send to the pipeline after step_name; sends to pointer
-        at target after processing through pipe. a string or int isas an
+        at target after processing through pipe. a string or int is an
         insert into the step named 'target' of self. if no target is given,
         merely calls pipe and sends its output to nowhere. you are allowed
         to create sends from nonexistent step names, but they will do nothing
@@ -211,11 +236,22 @@ class Composition:
 
     def execute(self, signal: Any = None, **special_kwargs):
         """execute the pipeline, initializing it with signal."""
-        iterpipe = self.itercall(signal, **special_kwargs)
-        state = None
-        for state in iterpipe:
-            pass
-        return state
+        step_ix = -1
+        try:
+            iterpipe = self.itercall(signal, **special_kwargs)
+            state = None
+            for step_ix, state in zip(count(), iterpipe):
+                pass
+            return state
+        except Exception as ex:
+            if self.tracker is not None:
+                self.tracker.track(
+                    self.steps[tuple(self.steps.keys())[step_ix + 1]],
+                    **exc_report(ex, stepback=0)
+                )
+            if self.optional is True:
+                return None
+            raise
 
     def iter(self):
         raise NotImplementedError
