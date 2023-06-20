@@ -328,7 +328,7 @@ class Composition:
 
     def __str__(self):
         me_string = ""
-        for attr in ("steps", "sends", "inserts", "flow"):
+        for attr in ("steps", "sends", "inserts", "route"):
             if attr not in dir(self):
                 continue
             if len(getattr(self, attr)) == 0:
