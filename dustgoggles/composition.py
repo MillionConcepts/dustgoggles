@@ -1,7 +1,16 @@
 from itertools import count
 from operator import attrgetter
-from typing import Optional, Union, Mapping, Any, Callable, Sequence, Hashable, \
-    MutableSequence
+from typing import (
+    Optional,
+    Union,
+    Mapping,
+    Any,
+    Callable,
+    Sequence,
+    Hashable,
+    MutableSequence,
+    Literal,
+)
 
 from cytoolz import identity, keyfilter, first
 
@@ -18,6 +27,7 @@ class Composition:
     conceptually like a signal processing chain but _not_ designed for
     real-time signal processing.
     """
+
     def __init__(
         self,
         steps: Optional[
@@ -27,9 +37,10 @@ class Composition:
         inserts: Optional[
             Union[Mapping[Any, Mapping], Sequence[Mapping]]
         ] = None,
+        patch: Optional[Union[Mapping[Any, Sequence], Sequence]] = None,
         name: Optional[str] = None,
         tracker: Optional[TrivialTracker] = None,
-        optional = False
+        optional: bool = False,
     ):
         self.captures = None
         self.name = "untitled Composition" if name is None else name
@@ -44,6 +55,7 @@ class Composition:
         # representation is ugly and the convenience is small.
         self.sends = enumerate_as_mapping(sends)
         self.inserts = enumerate_as_mapping(inserts)
+        self.patch = enumerate_as_mapping(patch)
         self.optional = optional
         if self.tracker is not None:
             self._add_track_sends()
@@ -79,7 +91,9 @@ class Composition:
             return
         self.add_send(
             step_name,
-            pipe=_track_factory(self.tracker, step_name, self.steps[step_name])
+            pipe=_track_factory(
+                self.tracker, step_name, self.steps[step_name]
+            ),
         )
 
     def reindex(self):
@@ -110,15 +124,23 @@ class Composition:
         buses = self.sends.get(step_name)
         if (buses is None) or (len(buses) == 0):
             return
+        args, kwargs, unpack = self._route_signal(state, step_name)
+        dopass = (len(args) + len(kwargs)) == 0
         for pipe, target, index in buses:
             if target is None:
                 if pipe is None:
                     continue
-                pipe(state)
+                self._flow_signal(pipe, state, args, kwargs, unpack, dopass)
             elif pipe is None:
                 self.place_into(state, target, index)
             else:
-                self.place_into(pipe(state), target, index)
+                self.place_into(
+                    self._flow_signal(
+                        pipe, state, args, kwargs, unpack, dopass
+                    ),
+                    target,
+                    index
+                )
 
     def add_captures(self):
         """add captures to all steps."""
@@ -141,7 +163,7 @@ class Composition:
         step_name: Hashable,
         pipe: Optional[Callable] = None,
         target: Optional[Any] = None,
-        pointer: Union[str, int, None] = None
+        pointer: Union[str, int, None] = None,
     ):
         """
         adds a send to the pipeline after step_name; sends to pointer
@@ -153,16 +175,14 @@ class Composition:
         """
         if (target is None) and (pipe is None):
             raise ValueError(
-                "Either pipe or target must be defined to create a send.")
+                "Either pipe or target must be defined to create a send."
+            )
         if step_name not in self.sends.keys():
             self.sends[step_name] = []
         self.sends[step_name].append((pipe, target, pointer))
 
     def add_insert(
-        self,
-        step_name: Hashable,
-        key: Union[str, int],
-        value: Any
+        self, step_name: Hashable, key: Union[str, int], value: Any
     ):
         """
         adds an insert to the pipeline at step_name. an integer-valued
@@ -194,7 +214,7 @@ class Composition:
             target.write(thing)
 
     @staticmethod
-    def _flow_signal(state, args):
+    def _flow_args(state, args):
         # signal flows into the first open position, permitting partial
         # evaluation of steps with 'fixed' positional-only arguments
         opening = first(
@@ -203,41 +223,76 @@ class Composition:
         args[opening - 1] = state
         return [args[k] for k in sorted(args.keys())]
 
-    def _call_partial_step(self, state, step, args, kwargs):
-        # note that inserts always override args and kwargs baked into the
-        # step itself.
+    @staticmethod
+    def _flow_into_partial(step, args, kwargs):
+        # note that inserts / routes always override args and kwargs baked
+        # into the step itself.
         if "args" in dir(step):
             args = enumerate_as_mapping(step.args) | args
         if "keywords" in dir(step):
             kwargs = step.keywords | kwargs
-        if len(args) == 0:
-            return step.func(state, **kwargs)
-        return step.func(*self._flow_signal(state, args), **kwargs)
+        return step.func, args, kwargs
 
-    def call_step(self, step_name, state):
-        step, insert = self.steps[step_name], self.inserts.get(step_name)
-        if insert is None:
-            args, kwargs = {}, {}
-        else:
-            args = keyfilter(lambda k: isinstance(k, int), insert)
-            kwargs = keyfilter(lambda k: isinstance(k, str), insert)
+    def _route_signal(
+        self, result, prior, which: Literal["step", "send"] = "step"
+    ):
+        if prior is None:
+            return {}, {}, None
+        if self.patch.get(prior) is None:
+            return {}, {}, None
+        if (routespec := self.patch[prior].get(which)) is None:
+            return {}, {}, None
+        args, kwargs, unpack = {}, {}, routespec.get("unpack")
+        if (argmap := routespec.get("argmap")) is not None:
+            args = {m: result[n] for m, n, in argmap.items()}
+        if (kwargmap := routespec.get("kwargmap")) is not None:
+            kwargs = {m: result[n] for m, n in kwargmap.items()}
+        return args, kwargs, unpack
+
+    def _flow_signal(self, step, state, args, kwargs, unpack, dopass):
         if "func" in dir(step):
-            return self._call_partial_step(state, step, args, kwargs)
-        if len(args) == 0:
-            return step(state, **kwargs)
-        return step(*self._flow_signal(state, args), **kwargs)
+            step, args, kwargs = self._flow_into_partial(step, args, kwargs)
+        if len(args) != 0:
+            dopass, args = False, self._flow_args(state, args)
+        else:
+            args = ()
+        if dopass is False:
+            return step(*args, **kwargs)
+        if unpack is None:
+            return step(state, *args, **kwargs)
+        elif unpack == "*":
+            return step(*state, *args, **kwargs)
+        elif unpack == "**":
+            return step(*args, **kwargs, **state)
+        raise ValueError("bad unpacking specification")
 
-    def _do_step(self, step_name, state):
+    def call_step(self, step_name, state, prior):
+        rargs, rkwargs, unpack = self._route_signal(state, prior)
+        dopass = (len(rargs) + len(rkwargs)) == 0
+        step, insert = self.steps[step_name], self.inserts.get(step_name)
+        if insert is not None:
+            iargs = keyfilter(lambda k: isinstance(k, int), insert)
+            ikwargs = keyfilter(lambda k: isinstance(k, str), insert)
+            if match := set(iargs).intersection(rargs):
+                raise ValueError(f"arg overpatch on {step_name}: {match}")
+            if match := set(ikwargs).intersection(rkwargs):
+                raise ValueError(f"kwarg overpatch on {step_name}: {match}")
+        else:
+            iargs, ikwargs = {}, {}
+        args, kwargs = rargs | iargs, rkwargs | ikwargs
+        return self._flow_signal(step, state, args, kwargs, unpack, dopass)
+
+    def _do_step(self, step_name, state, prior=None):
         """perform an individual step of the pipeline"""
-        state = self.call_step(step_name, state)
+        state = self.call_step(step_name, state, prior)
         self._perform_sends(step_name, state)
         return state
 
     def itercall(self, signal: Any = None, **special_kwargs):
         self._bind_special_runtime_kwargs(special_kwargs)
-        state = signal
+        state, prior = signal, None
         for step_name in self.steps.keys():
-            state = self._do_step(step_name, state)
+            state = self._do_step(step_name, state, prior)
             yield state
 
     def execute(self, signal: Any = None, **special_kwargs):
@@ -253,7 +308,7 @@ class Composition:
             if self.tracker is not None:
                 self.tracker.track(
                     self.steps[tuple(self.steps.keys())[step_ix + 1]],
-                    **exc_report(ex, stepback=0)
+                    **exc_report(ex, stepback=0),
                 )
             if self.optional is True:
                 return None
@@ -273,8 +328,10 @@ class Composition:
 
     def __str__(self):
         me_string = ""
-        for attr in ("steps", "sends", "inserts"):
+        for attr in ("steps", "sends", "inserts", "flow"):
             if attr not in dir(self):
+                continue
+            if len(getattr(self, attr)) == 0:
                 continue
             me_string += f"{attr}:\n{getattr(self, attr).__repr__()}\n"
         if me_string == "":
@@ -289,7 +346,6 @@ class Composition:
 
 
 def _track_factory(tracker, step, func):
-
     def track(_):
         return tracker.track(func, step=step)
 
