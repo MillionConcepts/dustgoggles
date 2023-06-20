@@ -252,10 +252,12 @@ class Composition:
     def _flow_signal(self, step, state, args, kwargs, unpack, dopass):
         if "func" in dir(step):
             step, args, kwargs = self._flow_into_partial(step, args, kwargs)
-        if len(args) != 0:
+        if (len(args) != 0) and (dopass is True):
             dopass, args = False, self._flow_args(state, args)
-        else:
+        elif len(args) == 0:
             args = ()
+        else:
+            args = [args[k] for k in sorted(args.keys())]
         if dopass is False:
             return step(*args, **kwargs)
         if unpack is None:
