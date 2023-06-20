@@ -292,7 +292,7 @@ class Composition:
         self._bind_special_runtime_kwargs(special_kwargs)
         state, prior = signal, None
         for step_name in self.steps.keys():
-            state = self._do_step(step_name, state, prior)
+            state, prior = self._do_step(step_name, state, prior), step_name
             yield state
 
     def execute(self, signal: Any = None, **special_kwargs):
