@@ -8,7 +8,7 @@ setup(
     author_email="mstclair@millionconcepts.com",
     packages=find_packages(),
     python_requires=">=3.9",
-    install_requires=["cytoolz"],
+    install_requires=["cytoolz", "more-itertools"],
     extras_require={
         "mosaic": ["pandas", "pyarrow"],
         "pivot": ["pandas"],
