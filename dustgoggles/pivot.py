@@ -52,7 +52,11 @@ def check_and_drop_duplicate_columns(dataframe: pd.DataFrame):
 
 
 def extract_constants(
-    df, to_dict=True, drop_constants=False, how="rows", dropna=True
+    df: pd.DataFrame,
+    to_dict=True,
+    drop_constants=False,
+    how="rows",
+    dropna=True
 ):
     """
     extract 'constant' values from a dataframe -- by default, columns with
@@ -64,16 +68,18 @@ def extract_constants(
     returns the constants (as a dict if specified) and either the
     variable-only or full original dataframe (as specified)
     """
-    if how == "rows":
-        axis = 0
-    elif how == "columns":
-        axis = 1
-    else:
+    if how not in ("rows", "columns"):
         raise ValueError(f"unknown how {how}")
+    constant_indices = []
     try:
-        constant_indices = df.nunique(axis=axis, dropna=dropna) <= 1
+        method = "iterrows" if how == "columns" else "items"
+        for ix, series in getattr(df, method)():
+            series = series if dropna is False else series.dropna()
+            if (series == series.iloc[0]).all():
+                constant_indices.append(ix)
     except TypeError:
-        if axis == 1:
+        # TODO: still necessary?
+        if how == "columns":
             raise NotImplementedError("nested fields not supported columnwise")
         constant_indices = pd.Series(False, df.columns)
         for c in df.columns:
@@ -81,9 +87,9 @@ def extract_constants(
                 test_series = df[c].map(tuple)
             else:
                 test_series = df[c]
-            if test_series.nunique(dropna=dropna) <= 1:
+            if (test_series.iloc[0] == test_series).all():
                 constant_indices.loc[c] = True
-    if axis == 0:
+    if how == "rows":
         constants = df.loc[:, constant_indices]
         variables = df.loc[:, ~constant_indices]
     else:
