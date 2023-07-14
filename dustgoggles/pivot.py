@@ -70,18 +70,20 @@ def extract_constants(
     """
     if how not in ("rows", "columns"):
         raise ValueError(f"unknown how {how}")
-    constant_indices = []
+    if how == "rows":
+        constant_indices = pd.Series(False, df.columns)
+    else:
+        constant_indices = pd.Series(False, df.index)
     try:
         method = "iterrows" if how == "columns" else "items"
         for ix, series in getattr(df, method)():
             series = series if dropna is False else series.dropna()
             if (series == series.iloc[0]).all():
-                constant_indices.append(ix)
+                constant_indices.loc[ix] = True
     except TypeError:
         # TODO: still necessary?
         if how == "columns":
             raise NotImplementedError("nested fields not supported columnwise")
-        constant_indices = pd.Series(False, df.columns)
         for c in df.columns:
             if isinstance(df[c].iloc[0], list):
                 test_series = df[c].map(tuple)
