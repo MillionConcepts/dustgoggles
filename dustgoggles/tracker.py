@@ -1,7 +1,9 @@
 import datetime as dt
 import json
 from inspect import currentframe, getframeinfo
+from io import SEEK_END
 from itertools import count
+import os
 from pathlib import Path
 
 
@@ -42,7 +44,7 @@ class Tracker(TrivialTracker):
 
     def clear(self):
         self.outpath.unlink(missing_ok=True)
-        self.history = []
+        self.history[:] = []
         self.counter = count(1)
 
     def track(self, func, **metadata):
@@ -73,15 +75,22 @@ class Tracker(TrivialTracker):
     def _set_paused(self, state: bool):
         self._paused = state
 
+    # noinspection PyTypeChecker
     def dump(self):
         if self.paused is True:
             return
-        # TODO: do this more cleverly with incremental writes etc.
         self.log["write_timestamp"] = dt.datetime.now().isoformat()
         key_order = sorted(self.log.keys(), key=lambda n: "history" in n)
         self.log = {k: self.log[k] for k in key_order}
-        with self.outpath.open("a") as stream:
-            json.dump(self.log, stream, indent=2)
+        mode = "rb+" if self.outpath.exists() else "wb"
+        with self.outpath.open(mode) as stream:
+            if mode == "rb+":
+                stream.seek(-1, SEEK_END)
+                stream.write(b",\n")
+            else:
+                stream.write(b"[")
+            stream.write(json.dumps(self.log, indent=2).encode('utf-8'))
+            stream.write(b"]")
 
     _paused = False
     paused = property(_get_paused, _set_paused)
