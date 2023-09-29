@@ -1,7 +1,5 @@
 """utilities for dynamic function generation and code introspection"""
-import datetime as dt
-import traceback
-from inspect import getsource, signature, Signature
+from inspect import getsource, signature, Signature, getmodule
 from types import FunctionType, CodeType, MethodType
 from typing import Optional, Callable, MutableSequence
 
@@ -56,18 +54,23 @@ def define(code: CodeType, globals_: Optional[dict] = None) -> FunctionType:
     return FunctionType(code, globals_)
 
 
-def exc_report(exc, stepback=1):
+def exc_report(exc, stringify_exception=True):
     if exc is None:
         return {}
-    stack = traceback.extract_tb(exc.__traceback__)
-    if stepback > 0:
-        stack = stack[: -(1 + stepback)]
-    return {
-        "exception": exc,
-        "lineno": tuple([a.lineno for a in stack]),
-        "stack": tuple([a.name for a in stack]),
-        "time": dt.datetime.now().isoformat()[:-3],
-    }
+    tb = exc.__traceback__
+    exc = exc if stringify_exception is False else f"{type(exc)}: {exc}"
+    report = {'exception': exc, 'lineno': [], 'name': [], 'filename': []}
+    while tb is not None:
+        fr = tb.tb_frame
+        if (module := getmodule(fr)) is not None:
+            report['name'].append(f'{module.__name__}.{fr.f_code.co_qualname}')
+        else:
+            report['name'].append(fr.f_code.co_name)
+        report['lineno'].append(tb.tb_lineno)
+        report['filename'].append(fr.f_code.co_filename)
+        del fr  # taking excessive care here
+        tb = tb.tb_next
+    return report
 
 
 class Dynamic:

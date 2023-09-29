@@ -29,7 +29,7 @@ class Composition:
         ] = None,
         name: Optional[str] = None,
         tracker: Optional[TrivialTracker] = None,
-        optional = False
+        optional: bool = False
     ):
         self.captures = None
         self.name = "untitled Composition" if name is None else name
@@ -253,7 +253,7 @@ class Composition:
             if self.tracker is not None:
                 self.tracker.track(
                     self.steps[tuple(self.steps.keys())[step_ix + 1]],
-                    **exc_report(ex, stepback=0)
+                    **exc_report(ex)
                 )
             if self.optional is True:
                 return None
