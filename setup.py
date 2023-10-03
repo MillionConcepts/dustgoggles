@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="dustgoggles",
-    version="0.7.3",
+    version="0.7.4",
     url="https://github.com/millionconcepts/dustgoggles.git",
     author="Million Concepts",
     author_email="mstclair@millionconcepts.com",
