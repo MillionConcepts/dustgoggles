@@ -63,7 +63,11 @@ def exc_report(exc, stringify_exception=True):
     while tb is not None:
         fr = tb.tb_frame
         if (module := getmodule(fr)) is not None:
-            report['name'].append(f'{module.__name__}.{fr.f_code.co_qualname}')
+            try:
+                codename = fr.f_code.co_qualname
+            except AttributeError:
+                codename = fr.f_code.co_name
+            report['name'].append(f'{module.__name__}.{codename}')
         else:
             report['name'].append(fr.f_code.co_name)
         report['lineno'].append(tb.tb_lineno)
