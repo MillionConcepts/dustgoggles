@@ -78,7 +78,7 @@ def extract_constants(
         method = "iterrows" if how == "columns" else "items"
         for ix, series in getattr(df, method)():
             series = series if dropna is False else series.dropna()
-            if (series == series.iloc[0]).all():
+            if (len(series) == 0) or (series == series.iloc[0]).all():
                 constant_indices.loc[ix] = True
     except TypeError:
         # TODO: still necessary?
