@@ -45,7 +45,7 @@ def test_pdstr():
     extractor = pdstr("extract", r"s(\w)(\w)")
     answers = iter([np.nan, ["t", "o"], ["h", "e"], np.nan])
 
-    for name, col in df.iteritems():
+    for name, col in df.items():
         if not col.dtype == np.dtype("O"):
             continue
         extracted = extractor(col)

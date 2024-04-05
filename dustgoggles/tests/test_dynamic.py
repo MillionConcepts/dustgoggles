@@ -8,5 +8,5 @@ def test_dynamic_1():
     dyn("j")
     assert (
         str(dyn.errors[0]["exception"])
-        == 'can only concatenate str (not "int") to str'
+        == '<class \'TypeError\'>: can only concatenate str (not "int") to str'
     )
