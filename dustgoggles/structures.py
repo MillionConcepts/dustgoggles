@@ -422,6 +422,18 @@ class MaybePool:
                 output[k] = ex
         return output
 
+    @property
+    def n_ready(self):
+        return len(tuple(filter(lambda r: r.ready(), self.results.values())))
+
+    @property
+    def n_results(self):
+        return len(self.results)
+
+    @property
+    def n_running(self):
+        return self.n_results - self.n_ready
+
     def results_ready(self):
         return {k: v.ready() for k, v in self.results.items()}
 
