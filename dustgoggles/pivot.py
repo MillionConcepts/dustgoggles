@@ -1,15 +1,18 @@
 """
 preprocessing and shorthand functions for dataframes, mappings, and ndarrays.
 """
+import warnings
 from functools import reduce
 from itertools import product
+from numbers import Number, Real
 from operator import attrgetter
 import re
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from cytoolz import valfilter
 import numpy as np
 import pandas as pd
+from dustgoggles.func import gmap
 
 from dustgoggles.structures import listify
 
@@ -140,45 +143,70 @@ def numeric_columns(df):
     return typed_columns(df, ("int", "float"))
 
 
-DTYPES = (
-    "uint8", "int8", "uint16", "int16",
-    "uint32", "int32", "uint64", "int64",
-    "float32", "float64"
-)
+def check_in_dtype_bounds(
+    amin: Union[int, float], amax: Union[int, float], dt: np.dtype
+):
+    info = np.iinfo(dt) if dt.kind in 'iu' else np.finfo(dt)
+    return bool(amin >= info.min and amax <= info.max)
+
+
+def _downcast_int_array(arr):
+    amin, amax = arr.min(), arr.max()
+    sign = 'u' if amin >= 0 else ''
+    for depth in (8, 16, 32, 64):
+        dt = np.dtype(f'{sign}int{depth}')
+        if check_in_dtype_bounds(amin, amax, dt):
+            return {'recast': arr.astype(dt), 'aerr': 0, 'rerr': 0}
+    raise TypeError("Unusual failure in downcasting integer array.")
 
 
 def downcast(arr, atol=0.01, rtol=0.001):
-    # NaNs and infs don't count but should
-    # be preserved
-    nonfinite = ~np.isfinite(arr)
-    nonfinite_vals = arr[nonfinite]
-    arr[nonfinite] = 0
-    recast = None
-    for dtype in DTYPES:
-        recast = arr.astype(dtype)
-        offsets = np.abs(arr - recast)
+    """
+    NOTE: doesn't currently handle nullable integer types, structured types,
+        complex numbers, object types, etc.
+    """
+    if arr.dtype.kind in 'cM':
+        raise TypeError(f"This function doesn't handle {arr.dtype} arrays.")
+    if arr.dtype.kind in 'ui':
+        return _downcast_int_array(arr)
+    arr_finite = arr[np.isfinite(arr)]
+    if len(arr_finite) == 0:
+        return {'recast': arr.copy(), 'aerr': np.nan, 'rerr': np.nan}
+    has_nonfinite = arr_finite.size < arr.size
+    nzero_mask = arr_finite != 0
+    arr_nzero = arr_finite[nzero_mask]
+    if arr_nzero.size == 0 and not has_nonfinite:
+        return arr.astype(np.uint8)
+    elif arr_nzero.size == 0:
+        return arr.astype(np.float16)
+    amin, amax = arr_finite.min(), arr_finite.max()
+    for kind, number in product(
+        ('uint', 'int', 'float'), (8, 16, 32, 64, 128)):
+        if kind != 'float' and (has_nonfinite or number == 128):
+            continue
+        if kind == 'float' and number == 8:
+            continue
+        dtype = np.dtype(f"{kind}{number}")
+        if check_in_dtype_bounds(amin, amax, dtype) is False:
+            continue
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            recast = arr_nzero.astype(dtype)
+        offsets = np.abs(arr_nzero - recast[nzero_mask])
         if (aerr := np.nanmax(np.abs(offsets))) > atol:
             continue
-        if (rerr := np.nanmax(np.abs(offsets / arr))) > rtol:
+        if (rerr := np.nanmax(np.abs(offsets / arr_nzero))) > rtol:
             continue
-        break
-    if recast is None:
-        raise TypeError
-    # noinspection PyUnboundLocalVariable
-    return {
-        'recast': recast,
-        'nonfinite_mask': nonfinite,
-        'nonfinite_vals': nonfinite_vals,
-        'aerr': aerr,
-        'rerr': rerr
-    }
+        return {'recast': arr.astype(dtype), 'aerr': aerr, 'rerr': rerr}
+    raise TypeError("Unusual error in recasting this array.")
 
 
+# TODO: rewrite
 def downcast_df(df, atol=0.01, rtol=0.001):
     num = numeric_columns(df)
     cast_series, cast_records = [], []
     for name, col in num.items():
-        rec = downcast(col.values.T.copy(), atol, rtol) | {'name': name}
+        rec = downcast(col.values.copy(), atol, rtol) | {'name': name}
         cast_records.append(rec)
     while len(cast_records) > 0:
         rec = cast_records.pop()
