@@ -165,8 +165,12 @@ def downcast(arr, atol=0.01, rtol=0.001):
     NOTE: doesn't currently handle nullable integer types, structured types,
         complex numbers, object types, etc.
     """
-    if arr.dtype.kind in 'cM':
-        raise TypeError(f"This function doesn't handle {arr.dtype} arrays.")
+    arr = np.asarray(arr)
+    if arr.dtype.kind in 'cMO':
+        raise TypeError(
+            f"This function doesn't handle {arr.dtype} arrays. Cast to an "
+            f"integer or real type first if you want to use this function."
+        )
     if arr.dtype.kind in 'ui':
         return _downcast_int_array(arr)
     arr_finite = arr[np.isfinite(arr)]
@@ -192,7 +196,7 @@ def downcast(arr, atol=0.01, rtol=0.001):
         with warnings.catch_warnings():
             warnings.simplefilter('error')
             recast = arr_nzero.astype(dtype)
-        offsets = np.abs(arr_nzero - recast[nzero_mask])
+        offsets = np.abs(arr_nzero - recast)
         if (aerr := np.nanmax(np.abs(offsets))) > atol:
             continue
         if (rerr := np.nanmax(np.abs(offsets / arr_nzero))) > rtol:
