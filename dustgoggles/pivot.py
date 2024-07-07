@@ -7,11 +7,13 @@ from itertools import product
 from numbers import Number, Real
 from operator import attrgetter
 import re
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, Sequence, Literal
 
 from cytoolz import valfilter
 import numpy as np
 import pandas as pd
+from pandas.core.dtypes.common import is_numeric_dtype
+
 from dustgoggles.func import gmap
 
 from dustgoggles.structures import listify
@@ -147,24 +149,48 @@ def check_in_dtype_bounds(
     amin: Union[int, float], amax: Union[int, float], dt: np.dtype
 ):
     info = np.iinfo(dt) if dt.kind in 'iu' else np.finfo(dt)
-    return bool(amin >= info.min and amax <= info.max)
+    try:
+        return bool(amin >= info.min and amax <= info.max)
+    except TypeError:  # just too big!
+        return False
 
 
-def _downcast_int_array(arr):
+def _maybeseries(arr, dtype, library, name, aerr, rerr):
+    arr = arr.copy() if arr.dtype == dtype else arr.astype(dtype)
+    if library == 'pandas':
+        arr = pd.Series(arr, name=name)
+    return {'recast': arr, 'aerr': aerr, 'rerr': rerr}
+
+
+def _downcast_int_array(
+    arr: np.ndarray,
+    library: Literal["numpy", "pandas"],
+    name: Optional[str] = None
+):
     amin, amax = arr.min(), arr.max()
     sign = 'u' if amin >= 0 else ''
     for depth in (8, 16, 32, 64):
         dt = np.dtype(f'{sign}int{depth}')
         if check_in_dtype_bounds(amin, amax, dt):
-            return {'recast': arr.astype(dt), 'aerr': 0, 'rerr': 0}
+            # there's never 'error' casting int types to int types
+            return _maybeseries(arr, dt, library, name, 0, 0)
     raise TypeError("Unusual failure in downcasting integer array.")
 
 
-def downcast(arr, atol=0.01, rtol=0.001):
+def downcast(
+    arr: Sequence[Number],
+    atol: float = 5e-5,
+    rtol: float = 1e-6,
+    library: Literal["numpy", "pandas"] = "numpy",
+    use_nillable_int: bool = False
+):
     """
     NOTE: doesn't currently handle nullable integer types, structured types,
         complex numbers, object types, etc.
     """
+    if use_nillable_int is True and library == 'numpy':
+        raise TypeError("Can't generate numpy dtypes with nillable ints. ")
+    name = arr.name if hasattr(arr, "name") and library == "pandas" else None
     arr = np.asarray(arr)
     if arr.dtype.kind in 'cMO':
         raise TypeError(
@@ -172,23 +198,32 @@ def downcast(arr, atol=0.01, rtol=0.001):
             f"integer or real type first if you want to use this function."
         )
     if arr.dtype.kind in 'ui':
-        return _downcast_int_array(arr)
+        return _downcast_int_array(arr, library, name)
     arr_finite = arr[np.isfinite(arr)]
     if len(arr_finite) == 0:
-        return {'recast': arr.copy(), 'aerr': np.nan, 'rerr': np.nan}
+        # there's no meaningful way to recast in this case
+        return _maybeseries(arr, arr.dtype, library, name, 0, 0)
     has_nonfinite = arr_finite.size < arr.size
     nzero_mask = arr_finite != 0
     arr_nzero = arr_finite[nzero_mask]
     if arr_nzero.size == 0 and not has_nonfinite:
-        return arr.astype(np.uint8)
-    elif arr_nzero.size == 0:
+        return _maybeseries(arr, np.uint8, library, name, 0, 0)
+    elif arr_nzero.size == 0 and use_nillable_int is False:
         return arr.astype(np.float16)
+    elif arr_nzero.size == 0:
+        return _maybeseries(arr, pd.UInt8Dtype(), library, name, 0, 0)
     amin, amax = arr_finite.min(), arr_finite.max()
     for kind, number in product(
-        ('uint', 'int', 'float'), (8, 16, 32, 64, 128)):
-        if kind != 'float' and (has_nonfinite or number == 128):
+        ('uint', 'int', 'float'), (8, 16, 32, 64, 128)
+    ):
+        # we're done checking if this next clause is True
+        if kind == 'float' and number == arr.dtype.itemsize * 8:
+            return _maybeseries(arr, arr.dtype, library, name, 0, 0)
+        elif kind != 'float' and number == 128:
             continue
-        if kind == 'float' and number == 8:
+        elif kind != 'float' and has_nonfinite and use_nillable_int is False:
+            continue
+        elif kind == 'float' and number == 8:
             continue
         dtype = np.dtype(f"{kind}{number}")
         if check_in_dtype_bounds(amin, amax, dtype) is False:
@@ -201,36 +236,57 @@ def downcast(arr, atol=0.01, rtol=0.001):
             continue
         if (rerr := np.nanmax(np.abs(offsets / arr_nzero))) > rtol:
             continue
-        return {'recast': arr.astype(dtype), 'aerr': aerr, 'rerr': rerr}
+        if kind in ('uint', 'int') and has_nonfinite:
+            # we've already checked to make sure we're returning this as pandas
+            dtype = getattr(
+                pd, f"{kind[0].upper()}{kind[1:].capitalize}{number}Dtype"
+            )()
+        return _maybeseries(arr, dtype, library, name, aerr, rerr)
     raise TypeError("Unusual error in recasting this array.")
 
 
-# TODO: rewrite
-def downcast_df(df, atol=0.01, rtol=0.001):
-    num = numeric_columns(df)
-    cast_series, cast_records = [], []
-    for name, col in num.items():
-        rec = downcast(col.values.copy(), atol, rtol) | {'name': name}
-        cast_records.append(rec)
-    while len(cast_records) > 0:
-        rec = cast_records.pop()
-        hasna = rec['nonfinite_mask'].any()
-        if hasna and ("int" in (dname := rec['recast'].dtype.name)):
-            prefix = "U" if dname.startswith("u") else ""
-            depth = (rec['recast'].dtype.itemsize * 8)
-            dtype = getattr(pd, f"{prefix}Int{depth}Dtype")()
-            series = pd.Series(rec['recast'], name=rec['name'], dtype=dtype)
-        else:
-            series = pd.Series(rec['recast'], name=rec['name'])
-        if hasna:
-            series.loc[rec['nonfinite_mask']] = rec['nonfinite_vals']
-        cast_series.append(series)
-    castdown = pd.concat(list(reversed(cast_series)), axis=1)
-    castdown.index = df.index
-    # TODO: inefficient inserts
-    for c in castdown:
-        df[c] = castdown[c]
-    return df
+def downcast_df(
+    df: pd.DataFrame,
+    atol: float = 1e-5,
+    rtol: float = 1e-7,
+    use_nillable_int: bool = False,
+    reassemble: bool = True,
+    copy_all: bool = True
+):
+    cast_series = []
+    for _, col in df.items():
+        if not is_numeric_dtype(col.dtype):
+            cast_series.append(col if copy_all is False else col.copy())
+            continue
+        cast_series.append(
+            downcast(col, atol, rtol, 'pandas', use_nillable_int)['recast']
+        )
+    if reassemble is True:
+        return pd.concat(cast_series, axis=1)
+    return cast_series
+    # cast_series, cast_records = [], []
+    # for name, col in num.items():
+    #     rec = downcast(col.values.copy(), atol, rtol) | {'name': name}
+    #     cast_records.append(rec)
+    # while len(cast_records) > 0:
+    #     rec = cast_records.pop()
+    #     hasna = rec['nonfinite_mask'].any()
+    #     if hasna and ("int" in (dname := rec['recast'].dtype.name)):
+    #         prefix = "U" if dname.startswith("u") else ""
+    #         depth = (rec['recast'].dtype.itemsize * 8)
+    #         dtype = getattr(pd, f"{prefix}Int{depth}Dtype")()
+    #         series = pd.Series(rec['recast'], name=rec['name'], dtype=dtype)
+    #     else:
+    #         series = pd.Series(rec['recast'], name=rec['name'])
+    #     if hasna:
+    #         series.loc[rec['nonfinite_mask']] = rec['nonfinite_vals']
+    #     cast_series.append(series)
+    # castdown = pd.concat(list(reversed(cast_series)), axis=1)
+    # castdown.index = df.index
+    # # TODO: inefficient inserts
+    # for c in castdown:
+    #     df[c] = castdown[c]
+    # return df
 
 
 def junction(df1, df2, columns, set_method="difference"):
