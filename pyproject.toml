@@ -1,0 +1,53 @@
+# pyproject.toml documentation for reference:
+#   https://packaging.python.org/en/latest/
+#   https://setuptools.pypa.io/en/latest/userguide/
+
+[project]
+name        = "dustgoggles"
+version     = "0.7.6"
+description = "Ready for anything in these goggles."
+readme      = "README.md"
+license     = { file = "LICENSE.md" }
+
+authors     = [
+    { name = "Michael St. Clair", email = "mstclair@millionconcepts.com" },
+    { name = "Chase Million",     email = "chase@millionconcepts.com"    },
+    { name = "Sierra Brown",      email = "sierra@millionconcepts.com"   }
+]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+]
+
+requires-python = ">=3.9"
+dependencies = [
+    "cytoolz",
+    "more-itertools"
+]
+
+[project.optional-dependencies]
+mosaic       = ["pandas", "pyarrow"]
+pivot        = ["pandas"]
+tests        = ["pytest"]
+array_codecs = ["numpy"]
+
+[project.urls]
+Repository = "https://github.com/MillionConcepts/dustgoggles"
+
+[build-system]
+requires = ["setuptools >= 64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["dustgoggles*"]
+namespaces = false
+
+# Recommended for new projects by pytest manual.
+[tool.pytest.ini_options]
+addopts = [
+    "--import-mode=importlib"
+]
