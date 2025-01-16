@@ -371,6 +371,7 @@ class TagIndex(ShareableIndex):
         self.cache = []
         self.length = None
 
+    # TODO: why this instead of just a consistent filename structure?
     def hash_address(self, key):
         if not isinstance(key, bytes):
             key = str(key).encode()
@@ -611,9 +612,14 @@ class AbstractNotepad(ABC):
         mnemonic_factory: Optional[Callable] = None,
         update_on_init=True,
         debug=False,
+        no_value_lockout=False,
         **index_kwargs
     ):
         self.debug = debug
+        if no_value_lockout is True:
+            self.lock_class = FakeLock
+        else:
+            self.lock_class = SlidingLock
         if prefix is None:
             prefix = randint(100000, 999999)
         self.prefix = prefix
@@ -732,6 +738,7 @@ class Notepad(AbstractNotepad):
         mnemonic_factory=generic_mnemonic_factory,
         update_on_init=False,
         debug=False,
+        no_value_lockout=False,
         **index_kwargs
     ):
         super().__init__(
@@ -743,6 +750,7 @@ class Notepad(AbstractNotepad):
             mnemonic_factory,
             update_on_init,
             debug,
+            no_value_lockout,
             **index_kwargs
         )
 
@@ -759,11 +767,15 @@ class Notepad(AbstractNotepad):
             return default
 
     def __setitem__(self, key, value, meta=None, exists_ok: bool = True):
-        if isinstance(key, str) and key.startswith("index"):
-            raise KeyError("'index' is a reserved key prefix")
+        if isinstance(key, str):
+            if key.startswith("index"):
+                raise KeyError("'index' is a reserved key prefix")
+            elif key.endswith("_lock"):
+                raise KeyError("keys ending in _lock are reserved")
         try:
             self.index.add(key, meta, exists_ok=exists_ok)
-            self.memorize(value, self.address(key), exists_ok)
+            with self.lock_class(self.address(key) + "_lock", self.debug):
+                self.memorize(value, self.address(key), exists_ok)
             if self.debug is True:
                 log(f"{here()},,set key={key} to {value}")
         except FileExistsError:
